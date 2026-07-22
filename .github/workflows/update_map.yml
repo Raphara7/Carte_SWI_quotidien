@@ -1,0 +1,37 @@
+name: Mettre à jour la carte SWI
+
+on:
+  schedule:
+    # Tous les jours à 8h00 UTC (attention au décalage horaire si besoin, ex: 6h UTC = 8h en France l'été)
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Permet de le lancer manuellement depuis le site de GitHub si besoin
+
+permissions:
+  contents: write
+
+jobs:
+  run-python:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Installer les dépendances
+        run: |
+          pip install pandas matplotlib requests
+
+      - name: Exécuter le script
+        run: python generer_carte.py
+
+      - name: Sauvegarder et publier la nouvelle image sur le dépôt
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add static/carte.png
+          git commit -m "Mise à jour automatique de la carte SWI" || exit 0
+          git push

@@ -1,12 +1,6 @@
-# Données brutes et fichiers Parquet
 *.csv
 *.parquet
 SWI_Parquet_Annuel/
-
-# Dossier d'images générées
-static/
-
-# Fichiers systèmes et virtuels
 __pycache__/
 *.pyc
 .venv/

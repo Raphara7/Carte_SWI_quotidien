@@ -1,12 +1,12 @@
-# 🌍 Suivi de l'Indice d'Humidité des Sols (SWI) en France
+#  Suivi Anomalie de l'Indice d'Humidité des Sols (SWI) en France
 
 Ce projet génère quotidiennement et de manière entièrement automatisée une carte des anomalies d'humidité des sols (Soil Wetness Index - SWI) pour la France métropolitaine. Il compare la situation actuelle aux normales climatologiques de la période 1991-2020.
 
-👉 **[Voir la carte mise à jour automatiquement ici](https://raphara7.github.io/Carte_SWI_quotidien/)** 
+ **[Voir la carte mise à jour automatiquement ici](https://raphara7.github.io/Carte_SWI_quotidien/)** 
 
 --- 
 
-## ⚙️ Comment ça marche ? (Le Pipeline)
+##  Pipeline
 
 Ce dépôt utilise **GitHub Actions** pour exécuter un script Python tous les matins. Voici ce que fait le robot en arrière-plan :
 

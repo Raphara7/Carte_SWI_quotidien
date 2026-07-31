@@ -2,7 +2,7 @@
 
 Ce projet génère quotidiennement et de manière entièrement automatisée une carte des anomalies d'humidité des sols (Soil Wetness Index - SWI) pour la France métropolitaine. Il compare la situation actuelle aux normales climatologiques de la période 1991-2020.
 
-👉 **[Voir la carte mise à jour automatiquement ici](https://raphara7.github.io/NOM_DE_TON_DEPOT/)** *(N'oublie pas de remplacer ce lien par ton vrai lien GitHub Pages !)*
+👉 **[Voir la carte mise à jour automatiquement ici](https://raphara7.github.io/Carte_SWI_quotidien/)** 
 
 ---
 

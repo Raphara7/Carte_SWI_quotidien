@@ -9,6 +9,7 @@ matplotlib.use('Agg') # Indispensable pour les serveurs sans écran (GitHub Acti
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from datetime import datetime
+import geopandas as gpd
 
 # ==========================================
 # CONFIGURATION
@@ -93,22 +94,52 @@ print("4. Calcul Anomalie...")
 df_final = pd.merge(df_jour[["LAMBX", "LAMBY", "SWI"]].rename(columns={"SWI": "SWI_TODAY"}), df_normale, on=["LAMBX", "LAMBY"], how="inner")
 df_final["ECART"] = ((df_final["SWI_TODAY"] - df_final["SWI_NORMALE"]) / (df_final["SWI_NORMALE"] + 1e-6)) * 100
 
+
+
 # ==========================================
-# ÉTAPE 5 : CARTE
+# ÉTAPE 5 : CARTE AVEC FRONTIÈRES
 # ==========================================
 print("5. Génération Image...")
 grille = df_final.pivot(index="LAMBY", columns="LAMBX", values="ECART")
 fig, ax = plt.subplots(figsize=(10, 8))
+
+# 1. Calcul de l'étendue (extent) spatiale pour imshow
+# Indispensable pour que l'image corresponde aux coordonnées géographiques
+xmin, xmax = df_final["LAMBX"].min(), df_final["LAMBX"].max()
+ymin, ymax = df_final["LAMBY"].min(), df_final["LAMBY"].max()
+extent = [xmin, xmax, ymin, ymax]
 
 bounds = [-500, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 500]
 cmap_colors = plt.cm.RdBu(np.linspace(0, 1, len(bounds)-1))
 cmap_discrete = ListedColormap(cmap_colors)
 norm_discrete = BoundaryNorm(bounds, cmap_discrete.N)
 
-im = ax.imshow(grille, origin="lower", cmap=cmap_discrete, norm=norm_discrete)
+# Ajout de l'argument "extent" ici
+im = ax.imshow(grille, origin="lower", cmap=cmap_discrete, norm=norm_discrete, extent=extent)
+
+# 2. Ajout des frontières départementales via GeoPandas
+print("   -> Téléchargement et tracé des départements...")
+url_geojson = "https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements.geojson"
+try:
+    gdf_dep = gpd.read_file(url_geojson)
+    
+    # Reprojection dans le même système de coordonnées que les données Météo-France
+    # EPSG:2154 = Lambert 93 (standard français moderne)
+    # Note : Si vos frontières semblent décalées, essayez epsg=27572 (Lambert II étendu, ancien standard)
+    gdf_dep = gdf_dep.to_crs(epsg=2154) 
+    
+    # Tracé par-dessus l'axe existant
+    gdf_dep.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.5, alpha=0.7)
+except Exception as e:
+    print(f"   -> Avertissement : Impossible d'ajouter les frontières ({e})")
+
 ax.set_title(f"Anomalie d'humidité des sols (SWI) - {date_propre}\nÉcart relatif à la normale 1991-2020", fontsize=14, fontweight="bold")
 cbar = fig.colorbar(im, ax=ax, orientation="horizontal", fraction=0.04, pad=0.1, aspect=40, ticks=bounds[1:-1])
 cbar.set_label("Anomalie humidité des sols (SWI) en %", fontsize=12)
+
+# Masquer les axes numériques (optionnel mais plus esthétique pour une carte)
+ax.set_xticks([])
+ax.set_yticks([])
 
 plt.savefig(chemin_sauvegarde, bbox_inches="tight", dpi=150)
 plt.close()

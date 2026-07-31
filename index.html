@@ -25,6 +25,15 @@
             font-size: 0.9em;
             color: #666;
         }
+        /* Style ajouté pour le lien généré dynamiquement */
+        a.api-link {
+            color: #0066cc;
+            text-decoration: none;
+            word-wrap: break-word;
+        }
+        a.api-link:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -35,8 +44,27 @@
         <img src="static/carte.png" alt="Carte SWI France">
     </div>
 
+    <!-- Zone de texte qui sera remplie automatiquement par JavaScript -->
+    <div style="margin-top: 15px; font-size: 0.9em; color: #555; text-align: center;">
+        <p id="info-api">Recherche de la source des données en cours...</p>
+    </div>
+
     <footer>
         <p>Généré automatiquement via GitHub Actions</p>
     </footer>
+
+    <!-- Script pour lire le fichier info.json généré par Python -->
+    <script>
+        fetch('static/info.json')
+            .then(response => response.json())
+            .then(data => {
+                const apiText = `Données du <strong>${data.date}</strong>.<br>Source (API la plus récente sélectionnée) : <a class="api-link" href="${data.api_url}" target="_blank">${data.api_url}</a>`;
+                document.getElementById('info-api').innerHTML = apiText;
+            })
+            .catch(error => {
+                console.error('Erreur lors du chargement des infos API:', error);
+                document.getElementById('info-api').innerText = "Source des données : Météo-France (data.gouv.fr)";
+            });
+    </script>
 </body>
 </html>

@@ -4,7 +4,7 @@ Ce projet génère quotidiennement et de manière entièrement automatisée une 
 
 👉 **[Voir la carte mise à jour automatiquement ici](https://raphara7.github.io/Carte_SWI_quotidien/)** 
 
----
+--- 
 
 ## ⚙️ Comment ça marche ? (Le Pipeline)
 

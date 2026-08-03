@@ -5,16 +5,16 @@ import gdown
 import pandas as pd
 import numpy as np
 import matplotlib
-matplotlib.use('Agg') # Indispensable pour GitHub Actions
+matplotlib.use('Agg') # Indispensable pour GitHub Actions (sans écran)
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
-from datetime import datetime
+from datetime import datetime, timedelta
 import geopandas as gpd
 from shapely.geometry import box
 import json
 
 # ==========================================
-# CONFIGURATION ET CHEMINS
+# 1. CONFIGURATION ET CHEMINS
 # ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -30,11 +30,10 @@ dossier_parquet = os.path.join(BASE_DIR, "SWI_Parquet_Annuel")
 
 dossier_static = os.path.join(BASE_DIR, "static")
 os.makedirs(dossier_static, exist_ok=True)
-chemin_sauvegarde = os.path.join(dossier_static, "carte.png")
 chemin_json = os.path.join(dossier_static, "info.json")
 
 # ==========================================
-# FONCTION DE TÉLÉCHARGEMENT ET D'ANALYSE
+# 2. FONCTION DE TÉLÉCHARGEMENT ET D'ANALYSE
 # ==========================================
 def tester_api(url, fichier_temp):
     print(f"   -> Test de l'URL : {url}")
@@ -65,7 +64,7 @@ def tester_api(url, fichier_temp):
         return None, None, None
 
 # ==========================================
-# ÉTAPE 1 : COMPÉTITION DES API
+# 3. COMPÉTITION DES API & PRÉPARATION CUMULS
 # ==========================================
 print("1. Récupération des données et test des API...")
 date_1, df_jour_1, df_api_1 = tester_api(url_api_1, nom_fichier_api.replace(".csv", "_1.csv"))
@@ -91,18 +90,30 @@ print(f"   -> Date retenue : {date_propre}")
 with open(chemin_json, "w", encoding="utf-8") as f:
     json.dump({"date": date_propre, "api_url": url_retenue}, f, ensure_ascii=False, indent=4)
 
+# Calculs des cumuls sur 15 jours
+print("   -> Calcul des cumuls sur 15 jours...")
+col_date = "DATE" if "DATE" in df_api.columns else "date"
+date_moins_15 = derniere_date - timedelta(days=14)
+df_15j = df_api[(df_api[col_date] >= date_moins_15) & (df_api[col_date] <= derniere_date)].copy()
+
+col_preliq = "PRELIQ_Q" if "PRELIQ_Q" in df_15j.columns else "PRELIQ"
+col_prenei = "PRENEI_Q" if "PRENEI_Q" in df_15j.columns else "PRENEI"
+col_pe = "PE_Q" if "PE_Q" in df_15j.columns else "PE"
+col_wg = "WG_RACINE_Q" if "WG_RACINE_Q" in df_jour.columns else "WG_RACINE"
+col_evap = "EVAP_Q" if "EVAP_Q" in df_jour.columns else "EVAP"
+
+df_15j["PLUIE_TOTALE"] = df_15j[col_preliq] + df_15j[col_prenei]
+df_cumuls = df_15j.groupby(["LAMBX", "LAMBY"])[["PLUIE_TOTALE", col_pe]].sum().reset_index()
+
 # ==========================================
-# ÉTAPE 2 : HISTORIQUE GOOGLE DRIVE
+# 4. HISTORIQUE GOOGLE DRIVE & ANOMALIE
 # ==========================================
 print("2. Téléchargement de l'historique Parquet (Google Drive)...")
 os.makedirs(dossier_parquet, exist_ok=True)
 lien_drive = f"https://drive.google.com/drive/folders/{id_dossier_drive}?usp=sharing"
 gdown.download_folder(url=lien_drive, output=dossier_parquet, quiet=False, use_cookies=False)
 
-# ==========================================
-# ÉTAPE 3 : CALCUL NORMALE
-# ==========================================
-print("3. Lecture Parquet et calcul normale...")
+print("3. Lecture Parquet et calcul normale/anomalie...")
 liste_dates_historiques = []
 for annee in range(1991, 2021):
     try:
@@ -114,54 +125,107 @@ for annee in range(1991, 2021):
 df_hist = pd.read_parquet(dossier_parquet, filters=[("DATE", "in", liste_dates_historiques)])
 df_normale = df_hist.groupby(["LAMBX", "LAMBY"])["SWI"].mean().reset_index(name="SWI_NORMALE")
 
-# ==========================================
-# ÉTAPE 4 : ANOMALIE
-# ==========================================
-print("4. Calcul Anomalie...")
-df_final = pd.merge(df_jour[["LAMBX", "LAMBY", "SWI"]].rename(columns={"SWI": "SWI_TODAY"}), df_normale, on=["LAMBX", "LAMBY"], how="inner")
-df_final["ECART"] = ((df_final["SWI_TODAY"] - df_final["SWI_NORMALE"]) / (df_final["SWI_NORMALE"] + 1e-6)) * 100
+# On intègre l'anomalie directement dans df_jour
+df_jour = pd.merge(df_jour, df_normale, on=["LAMBX", "LAMBY"], how="inner")
+df_jour["ECART"] = ((df_jour["SWI"] - df_jour["SWI_NORMALE"]) / (df_jour["SWI_NORMALE"] + 1e-6)) * 100
 
 # ==========================================
-# ÉTAPE 5 : CARTE
+# 5. GESTION DU FOND DE CARTE ET MASQUES (SIG)
 # ==========================================
-print("5. Préparation de la cartographie (SIG)...")
-if df_final["LAMBY"].max() < 100000:
-    df_final["LAMBX"] = df_final["LAMBX"] * 100
-    df_final["LAMBY"] = df_final["LAMBY"] * 100
+print("4. Préparation de la géométrie de la France...")
+# Ajustement des coordonnées
+if df_jour["LAMBY"].max() < 100000:
+    df_jour["LAMBX"] *= 100
+    df_jour["LAMBY"] *= 100
+    df_cumuls["LAMBX"] *= 100
+    df_cumuls["LAMBY"] *= 100
 
-epsg_code = 2154 if df_final["LAMBY"].max() > 5000000 else 27572
-
-grille = df_final.pivot(index="LAMBY", columns="LAMBX", values="ECART")
-xmin, xmax = df_final["LAMBX"].min() - 4000, df_final["LAMBX"].max() + 4000
-ymin, ymax = df_final["LAMBY"].min() - 4000, df_final["LAMBY"].max() + 4000
+epsg_code = 2154 if df_jour["LAMBY"].max() > 5000000 else 27572
+xmin, xmax = df_jour["LAMBX"].min() - 4000, df_jour["LAMBX"].max() + 4000
+ymin, ymax = df_jour["LAMBY"].min() - 4000, df_jour["LAMBY"].max() + 4000
 extent_raster = [xmin, xmax, ymin, ymax]
 
-gdf_dep = gpd.read_file(url_geojson)
-gdf_dep = gdf_dep.to_crs(epsg=epsg_code)
+# Téléchargement/Lecture des frontières
+if not os.path.exists(fichier_geojson):
+    gdf_dep = gpd.read_file(url_geojson)
+    gdf_dep.to_file(fichier_geojson, driver="GeoJSON")
+else:
+    gdf_dep = gpd.read_file(fichier_geojson)
 
+gdf_dep = gdf_dep.to_crs(epsg=epsg_code)
 france_geom = gdf_dep.unary_union 
 bounding_box = box(xmin - 100000, ymin - 100000, xmax + 100000, ymax + 100000)
 masque_exterieur = bounding_box.difference(france_geom)
 gdf_masque = gpd.GeoDataFrame(geometry=[masque_exterieur], crs=epsg_code)
 
-fig, ax = plt.subplots(figsize=(10, 10))
-bounds = [-500, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 500]
-cmap_colors = plt.cm.RdBu(np.linspace(0, 1, len(bounds)-1))
-cmap_discrete = ListedColormap(cmap_colors)
-norm_discrete = BoundaryNorm(bounds, cmap_discrete.N)
+# ==========================================
+# 6. FONCTION MODULAIRE DE GÉNÉRATION DE CARTES
+# ==========================================
+def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar, cmap_name="viridis", is_anomalie=False):
+    print(f"   -> Génération de : {nom_fichier}...")
+    fig, ax = plt.subplots(figsize=(10, 10))
+    grille = df_data.pivot(index="LAMBY", columns="LAMBX", values=colonne)
+    
+    if is_anomalie:
+        bounds = [-500, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 500]
+        cmap = ListedColormap(plt.cm.RdBu(np.linspace(0, 1, len(bounds)-1)))
+        norm = BoundaryNorm(bounds, cmap.N)
+        im = ax.imshow(grille, origin="lower", cmap=cmap, norm=norm, extent=extent_raster, zorder=1)
+    else:
+        im = ax.imshow(grille, origin="lower", cmap=cmap_name, extent=extent_raster, zorder=1)
 
-im = ax.imshow(grille, origin="lower", cmap=cmap_discrete, norm=norm_discrete, extent=extent_raster, zorder=1)
-gdf_masque.plot(ax=ax, facecolor="white", edgecolor="none", zorder=1.5)
-gdf_dep.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.6, alpha=0.8, zorder=2)
+    # Superposition des masques et frontières
+    gdf_masque.plot(ax=ax, facecolor="white", edgecolor="none", zorder=1.5)
+    gdf_dep.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.6, alpha=0.8, zorder=2)
 
-ax.set_xlim(extent_raster[0], extent_raster[1])
-ax.set_ylim(extent_raster[2], extent_raster[3])
-ax.set_title(f"Anomalie d'humidité des sols (SWI) - {date_propre}\nÉcart relatif à la normale 1991-2020", fontsize=14, fontweight="bold")
-ax.axis("off") 
+    ax.set_xlim(extent_raster[0], extent_raster[1])
+    ax.set_ylim(extent_raster[2], extent_raster[3])
+    ax.set_title(titre, fontsize=14, fontweight="bold")
+    ax.axis("off") 
 
-cbar = fig.colorbar(im, ax=ax, orientation="horizontal", fraction=0.04, pad=0.05, aspect=40, ticks=bounds[1:-1])
-cbar.set_label("Anomalie humidité des sols (SWI) en %", fontsize=12)
+    cbar = fig.colorbar(im, ax=ax, orientation="horizontal", fraction=0.04, pad=0.05, aspect=40, 
+                        ticks=bounds[1:-1] if is_anomalie else None)
+    cbar.set_label(label_cbar, fontsize=12)
 
-plt.savefig(chemin_sauvegarde, bbox_inches="tight", dpi=150)
-plt.close()
-print("Terminé ! Carte et données JSON générées avec succès.")
+    chemin_complet = os.path.join(dossier_static, nom_fichier)
+    plt.savefig(chemin_complet, bbox_inches="tight", dpi=150)
+    plt.close()
+
+# ==========================================
+# 7. ROUTEUR DE CARTES (AJOUTER/RETIRER ICI)
+# ==========================================
+print("5. Création des cartes demandées...")
+
+# Liste des cartes à générer. Il suffit de commenter une ligne pour désactiver une carte.
+cartes_a_produire = [
+    {
+        "df_data": df_jour, "colonne": "SWI", "nom_fichier": "carte_swi_actuel.png", 
+        "titre": f"Humidité des sols (SWI) actuelle - {date_propre}", "label_cbar": "Indice SWI", "cmap_name": "Spectral"
+    },
+    {
+        "df_data": df_jour, "colonne": col_wg, "nom_fichier": "carte_engorgement.png", 
+        "titre": f"Engorgement des sols - {date_propre}", "label_cbar": "Teneur en eau (indice)", "cmap_name": "Blues"
+    },
+    {
+        "df_data": df_jour, "colonne": "ECART", "nom_fichier": "carte_anomalie.png", 
+        "titre": f"Anomalie humidité des sols (SWI) - {date_propre}\nÉcart relatif à la normale 1991-2020", "label_cbar": "Écart à la normale (%)", "is_anomalie": True
+    },
+    {
+        "df_data": df_jour, "colonne": col_evap, "nom_fichier": "carte_etr.png", 
+        "titre": f"Evapotranspiration réelle (ETR) - {date_propre}", "label_cbar": "ETR (mm)", "cmap_name": "YlGn"
+    },
+    {
+        "df_data": df_cumuls, "colonne": "PLUIE_TOTALE", "nom_fichier": "carte_pluie_15j.png", 
+        "titre": f"Cumul pluviométrique (15 derniers jours)", "label_cbar": "Précipitations (mm)", "cmap_name": "Blues"
+    },
+    {
+        "df_data": df_cumuls, "colonne": col_pe, "nom_fichier": "carte_pe_15j.png", 
+        "titre": f"Cumul précipitations efficaces (15 derniers jours)", "label_cbar": "Précipitations efficaces (mm)", "cmap_name": "BrBG"
+    }
+]
+
+# Boucle génératrice
+for config in cartes_a_produire:
+    creer_et_sauvegarder_carte(**config)
+
+print("✅ Terminé ! Toutes les cartes et le JSON sont prêts pour GitHub Pages.")

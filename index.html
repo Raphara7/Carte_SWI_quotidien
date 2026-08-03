@@ -3,29 +3,126 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Suivi SWI France</title>
+    <title>Suivi SWI et Données Hydrologiques - France</title>
     <style>
+        /* Styles généraux */
         body {
             font-family: Arial, sans-serif;
-            text-align: center;
+            margin: 0;
+            padding: 0;
             background-color: #f4f4f9;
             color: #333;
-            margin: 0;
-            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
         }
+        
+        header {
+            background-color: #004488;
+            color: white;
+            text-align: center;
+            padding: 15px 20px;
+        }
+        
+        header h1 {
+            margin: 0;
+            font-size: 1.5em;
+        }
+        
+        header p {
+            margin: 5px 0 0 0;
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        /* Disposition principale (Menu + Carte) */
+        .container {
+            display: flex;
+            flex: 1;
+            flex-direction: row;
+        }
+
+        /* Barre latérale (Menu) */
+        .sidebar {
+            width: 280px;
+            background-color: #ffffff;
+            border-right: 1px solid #ddd;
+            padding: 20px 0;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+            z-index: 10;
+        }
+
+        .sidebar h2 {
+            font-size: 1.1em;
+            margin: 0 0 15px 20px;
+            color: #555;
+        }
+
+        .menu-list {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .menu-item {
+            padding: 12px 20px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+            transition: background-color 0.2s, border-left 0.2s;
+            border-left: 4px solid transparent;
+        }
+
+        .menu-item:hover {
+            background-color: #f0f4f8;
+        }
+
+        /* Style pour l'élément actif du menu */
+        .menu-item.active {
+            background-color: #e6f0fa;
+            border-left: 4px solid #0066cc;
+            font-weight: bold;
+            color: #004488;
+        }
+
+        /* Zone d'affichage de la carte */
+        .content {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+        }
+
+        .map-title {
+            margin-top: 0;
+            color: #444;
+            text-align: center;
+        }
+
         img {
             max-width: 100%;
             height: auto;
             border: 1px solid #ccc;
             box-shadow: 0px 4px 8px rgba(0,0,0,0.1);
             background-color: white;
+            max-height: 80vh; /* Empêche l'image de devenir gigantesque sur les très grands écrans */
         }
-        footer {
+
+        /* Zone d'infos API */
+        .api-info {
             margin-top: 20px;
             font-size: 0.9em;
-            color: #666;
+            color: #555;
+            text-align: center;
+            background: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            width: 100%;
+            max-width: 800px;
         }
-        /* Style ajouté pour le lien généré dynamiquement */
+
         a.api-link {
             color: #0066cc;
             text-decoration: none;
@@ -34,27 +131,109 @@
         a.api-link:hover {
             text-decoration: underline;
         }
+
+        footer {
+            text-align: center;
+            padding: 15px;
+            font-size: 0.85em;
+            color: #666;
+            border-top: 1px solid #ddd;
+            background-color: white;
+        }
+
+        /* Adaptation pour mobiles */
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+            .sidebar {
+                width: 100%;
+                border-right: none;
+                border-bottom: 1px solid #ddd;
+                padding: 10px 0;
+            }
+            .menu-item {
+                padding: 10px 15px;
+            }
+        }
     </style>
 </head>
 <body>
-    <h1>Carte SWI de la France</h1>
-    <p>Mise à jour automatique quotidienne (données data.gouv.fr)</p>
     
-    <div>
-        <img src="static/carte.png" alt="Carte SWI France">
-    </div>
+    <header>
+        <h1>Situation Hydrologique et Humidité des Sols</h1>
+        <p>Mise à jour automatique quotidienne (données Météo-France / data.gouv.fr)</p>
+    </header>
 
-    <!-- Zone de texte qui sera remplie automatiquement par JavaScript -->
-    <div style="margin-top: 15px; font-size: 0.9em; color: #555; text-align: center;">
-        <p id="info-api">Recherche de la source des données en cours...</p>
+    <div class="container">
+        <!-- Barre latérale avec le menu -->
+        <nav class="sidebar">
+            <h2>Sélectionnez une carte</h2>
+            <ul class="menu-list">
+                <li class="menu-item active" data-src="static/carte_swi_actuel.png" data-title="Humidité des sols (SWI) actuelle">
+                    Humidité des sols (SWI) actuelle
+                </li>
+                <li class="menu-item" data-src="static/carte_engorgement.png" data-title="Engorgement des sols">
+                    Engorgement des sols
+                </li>
+                <li class="menu-item" data-src="static/carte_anomalie.png" data-title="Anomalie humidité des sols (SWI)">
+                    Anomalie humidité des sols (SWI)
+                </li>
+                <li class="menu-item" data-src="static/carte_etr.png" data-title="Evapotranspiration réelle (ETR)">
+                    Evapotranspiration réelle (ETR) actuelle
+                </li>
+                <li class="menu-item" data-src="static/carte_pluie_15j.png" data-title="Cumul pluviométrique (15 derniers jours)">
+                    Cumul pluviométrique depuis 15 j.
+                </li>
+                <li class="menu-item" data-src="static/carte_pe_15j.png" data-title="Cumul précipitations efficaces (15 derniers jours)">
+                    Cumul précipitations efficaces depuis 15 j.
+                </li>
+            </ul>
+        </nav>
+
+        <!-- Zone d'affichage principale -->
+        <main class="content">
+            <h2 class="map-title" id="display-title">Humidité des sols (SWI) actuelle</h2>
+            
+            <img id="map-image" src="static/carte_swi_actuel.png" alt="Carte sélectionnée">
+
+            <!-- Zone de texte remplie automatiquement par JavaScript -->
+            <div class="api-info">
+                <p id="info-api">Recherche de la source des données en cours...</p>
+            </div>
+        </main>
     </div>
 
     <footer>
         <p>Généré automatiquement via GitHub Actions</p>
     </footer>
 
-    <!-- Script pour lire le fichier info.json généré par Python -->
+    <!-- Scripts pour la logique d'affichage -->
     <script>
+        // 1. Gestion du menu déroulant (changement de carte)
+        const menuItems = document.querySelectorAll('.menu-item');
+        const mapImage = document.getElementById('map-image');
+        const displayTitle = document.getElementById('display-title');
+
+        menuItems.forEach(item => {
+            item.addEventListener('click', function() {
+                // Retire la classe 'active' de tous les éléments
+                menuItems.forEach(el => el.classList.remove('active'));
+                
+                // Ajoute la classe 'active' à l'élément cliqué
+                this.classList.add('active');
+                
+                // Met à jour l'image et le titre
+                const newSrc = this.getAttribute('data-src');
+                const newTitle = this.getAttribute('data-title');
+                
+                mapImage.src = newSrc;
+                mapImage.alt = newTitle;
+                displayTitle.textContent = newTitle;
+            });
+        });
+
+        // 2. Lecture du fichier info.json pour la source et la date
         fetch('static/info.json')
             .then(response => response.json())
             .then(data => {

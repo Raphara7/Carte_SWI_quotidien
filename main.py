@@ -21,7 +21,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 nom_fichier_api = os.path.join(BASE_DIR, "carte_swi_api.csv")
 fichier_geojson = os.path.join(BASE_DIR, "departements.geojson")
 
-url_api_1 = "https://www.data.gouv.fr/api/1/datasets/r/adcca99a-6db0-495a-869f-40c888174a57"
+url_api_1 = "https://www.data.gouv.fr/fr/datasets/r/adcca99a-6db0-495a-869f-40c888174a57"
 url_api_2 = "https://www.data.gouv.fr/api/1/datasets/r/15ffddfb-0d1b-4509-ae5a-613fad496d05"
 url_geojson = "https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements.geojson"
 

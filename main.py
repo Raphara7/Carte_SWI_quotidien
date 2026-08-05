@@ -5,13 +5,15 @@ import gdown
 import pandas as pd
 import numpy as np
 import matplotlib
-matplotlib.use('Agg') # Indispensable pour GitHub Actions (sans écran)
+matplotlib.use('Agg')  # Indispensable pour GitHub Actions (sans interface graphique)
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from datetime import datetime, timedelta
 import geopandas as gpd
 from shapely.geometry import box
 import json
+import warnings
+warnings.filterwarnings('ignore')
 
 # ==========================================
 # 1. CONFIGURATION ET CHEMINS
@@ -22,7 +24,7 @@ nom_fichier_api = os.path.join(BASE_DIR, "carte_swi_api.csv")
 fichier_geojson = os.path.join(BASE_DIR, "departements.geojson")
 
 url_api_1 = "https://www.data.gouv.fr/fr/datasets/r/adcca99a-6db0-495a-869f-40c888174a57"
-url_api_2 = "https://www.data.gouv.fr/api/1/datasets/r/15ffddfb-0d1b-4509-ae5a-613fad496d05"
+url_api_2 = "https://www.data.gouv.fr/api/resources/a2bbcf56-32c9-4821-b195-7b676c5854db/data/"
 url_geojson = "https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements.geojson"
 
 id_dossier_drive = "1b2KJodhjiQZ7X9fx8JZ8_vZDbY2Dz1QX"
@@ -32,13 +34,16 @@ dossier_static = os.path.join(BASE_DIR, "static")
 os.makedirs(dossier_static, exist_ok=True)
 chemin_json = os.path.join(dossier_static, "info.json")
 
+# Header HTTP standard pour éviter d'être bloqué par data.gouv.fr
+HEADERS = {"User-Agent": "Mozilla/5.0 (GitHubActions/Automation Script)"}
+
 # ==========================================
 # 2. FONCTION DE TÉLÉCHARGEMENT ET D'ANALYSE
 # ==========================================
 def tester_api(url, fichier_temp):
     print(f"   -> Test de l'URL : {url}")
     try:
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, headers=HEADERS, timeout=60)
         if response.status_code == 200:
             if response.content.startswith(b"\x1f\x8b"):
                 with open(fichier_temp, "wb") as f:
@@ -46,21 +51,23 @@ def tester_api(url, fichier_temp):
             else:
                 with open(fichier_temp, "wb") as f:
                     f.write(response.content)
-            
+
             try:
                 df = pd.read_csv(fichier_temp, compression="gzip", sep=";")
-            except:
+            except Exception:
                 df = pd.read_csv(fichier_temp, sep=";")
-                
+
             col_date = "DATE" if "DATE" in df.columns else "date"
             df[col_date] = pd.to_datetime(df[col_date].astype(str).str.replace('-', ''), format='%Y%m%d', errors='coerce')
-            
+
             date_max = df[col_date].max()
             df_jour = df[df[col_date] == date_max].copy().drop_duplicates(subset=["LAMBY", "LAMBX"])
             return date_max, df_jour, df
         else:
+            print(f"      [Échec] Code statut HTTP: {response.status_code}")
             return None, None, None
-    except Exception:
+    except Exception as e:
+        print(f"      [Erreur API] : {e}")
         return None, None, None
 
 # ==========================================
@@ -80,15 +87,10 @@ elif date_1:
 elif date_2:
     derniere_date, df_jour, df_api, url_retenue = date_2, df_jour_2, df_api_2, url_api_2
 else:
-    print("❌ Les deux API ont échoué.")
-    exit()
+    raise RuntimeError("❌ Impossible d'accéder aux API Météo-France.")
 
 date_propre = derniere_date.strftime("%d/%m/%Y")
 print(f"   -> Date retenue : {date_propre}")
-
-# Sauvegarde des infos pour le HTML
-with open(chemin_json, "w", encoding="utf-8") as f:
-    json.dump({"date": date_propre, "api_url": url_retenue}, f, ensure_ascii=False, indent=4)
 
 # Calculs des cumuls sur 15 jours
 print("   -> Calcul des cumuls sur 15 jours...")
@@ -102,7 +104,7 @@ col_pe = "PE_Q" if "PE_Q" in df_15j.columns else "PE"
 col_wg = "WG_RACINE_Q" if "WG_RACINE_Q" in df_jour.columns else "WG_RACINE"
 col_evap = "EVAP_Q" if "EVAP_Q" in df_jour.columns else "EVAP"
 
-df_15j["PLUIE_TOTALE"] = df_15j[col_preliq] + df_15j[col_prenei]
+df_15j["PLUIE_TOTALE"] = df_15j[col_preliq].fillna(0) + df_15j[col_prenei].fillna(0)
 df_cumuls = df_15j.groupby(["LAMBX", "LAMBY"])[["PLUIE_TOTALE", col_pe]].sum().reset_index()
 
 # ==========================================
@@ -120,12 +122,12 @@ for annee in range(1991, 2021):
         d = datetime(annee, derniere_date.month, derniere_date.day)
         liste_dates_historiques.append(int(d.strftime("%Y%m%d")))
     except ValueError:
-        pass
+        pass  # Gestion des années bissextiles (29 février)
 
 df_hist = pd.read_parquet(dossier_parquet, filters=[("DATE", "in", liste_dates_historiques)])
 df_normale = df_hist.groupby(["LAMBX", "LAMBY"])["SWI"].mean().reset_index(name="SWI_NORMALE")
 
-# On intègre l'anomalie directement dans df_jour
+# Intégration de l'anomalie dans df_jour
 df_jour = pd.merge(df_jour, df_normale, on=["LAMBX", "LAMBY"], how="inner")
 df_jour["ECART"] = ((df_jour["SWI"] - df_jour["SWI_NORMALE"]) / (df_jour["SWI_NORMALE"] + 1e-6)) * 100
 
@@ -133,7 +135,7 @@ df_jour["ECART"] = ((df_jour["SWI"] - df_jour["SWI_NORMALE"]) / (df_jour["SWI_NO
 # 5. GESTION DU FOND DE CARTE ET MASQUES (SIG)
 # ==========================================
 print("4. Préparation de la géométrie de la France...")
-# Ajustement des coordonnées
+# Ajustement des coordonnées Lambert
 if df_jour["LAMBY"].max() < 100000:
     df_jour["LAMBX"] *= 100
     df_jour["LAMBY"] *= 100
@@ -159,7 +161,7 @@ masque_exterieur = bounding_box.difference(france_geom)
 gdf_masque = gpd.GeoDataFrame(geometry=[masque_exterieur], crs=epsg_code)
 
 # ==========================================
-# 6. FONCTION MODULAIRE DE GÉNÉRATION DE CARTES
+# 6. FONCTION DE GÉNÉRATION DE CARTES
 # ==========================================
 def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar, cmap_name="viridis", is_anomalie=False):
     print(f"   -> Génération de : {nom_fichier}...")
@@ -192,11 +194,10 @@ def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar,
     plt.close()
 
 # ==========================================
-# 7. ROUTEUR DE CARTES (AJOUTER/RETIRER ICI)
+# 7. EXÉCUTION DE LA GÉNÉRATION
 # ==========================================
 print("5. Création des cartes demandées...")
 
-# Liste des cartes à générer. Il suffit de commenter une ligne pour désactiver une carte.
 cartes_a_produire = [
     {
         "df_data": df_jour, "colonne": "SWI", "nom_fichier": "carte_swi_actuel.png", 
@@ -224,8 +225,16 @@ cartes_a_produire = [
     }
 ]
 
-# Boucle génératrice
 for config in cartes_a_produire:
     creer_et_sauvegarder_carte(**config)
 
-print("✅ Terminé ! Toutes les cartes et le JSON sont prêts pour GitHub Pages.")
+# Sauvegarde des métadonnées JSON pour l'interface web (GitHub Pages)
+with open(chemin_json, "w", encoding="utf-8") as f:
+    json.dump({
+        "date": date_propre,
+        "derniere_mise_a_jour": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "api_url": url_retenue,
+        "cartes_disponibles": [c["nom_fichier"] for c in cartes_a_produire]
+    }, f, ensure_ascii=False, indent=4)
+
+print("✅ Terminé ! Toutes les cartes et le JSON sont générés dans le dossier 'static/'.")

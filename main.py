@@ -5,13 +5,15 @@ import gdown
 import pandas as pd
 import numpy as np
 import matplotlib
-matplotlib.use('Agg') # Indispensable pour GitHub Actions (sans écran)
+matplotlib.use('Agg')  # Indispensable pour GitHub Actions (sans écran)
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from datetime import datetime, timedelta
 import geopandas as gpd
 from shapely.geometry import box
 import json
+import warnings
+warnings.filterwarnings('ignore')
 
 # ==========================================
 # 1. CONFIGURATION ET CHEMINS
@@ -21,8 +23,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 nom_fichier_api = os.path.join(BASE_DIR, "carte_swi_api.csv")
 fichier_geojson = os.path.join(BASE_DIR, "departements.geojson")
 
-url_api_1 = "https://www.data.gouv.fr/fr/datasets/r/adcca99a-6db0-495a-869f-40c888174a57"
-url_api_2 = "https://www.data.gouv.fr/api/1/datasets/r/15ffddfb-0d1b-4509-ae5a-613fad496d05"
+# ID exact de la ressource QUOT_SIM2_2026 (Météo-France / data.gouv.fr)
+RESOURCE_ID_2026 = "4fac033c-43f7-4e5d-aaad-84dce887f12e"
+
+# API Principale (data.gouv.fr) et Fallback direct S3 Météo-France
+URL_API_PRINCIPALE = f"https://www.data.gouv.fr/fr/datasets/r/{RESOURCE_ID_2026}"
+URL_API_FALLBACK = "https://object.files.data.gouv.fr/meteofrance/data/synop/SIM2/QUOT_SIM2_2026.csv.gz"
+
 url_geojson = "https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements.geojson"
 
 id_dossier_drive = "1b2KJodhjiQZ7X9fx8JZ8_vZDbY2Dz1QX"
@@ -32,63 +39,61 @@ dossier_static = os.path.join(BASE_DIR, "static")
 os.makedirs(dossier_static, exist_ok=True)
 chemin_json = os.path.join(dossier_static, "info.json")
 
+HEADERS = {"User-Agent": "Mozilla/5.0 (GitHubActions/Automation Script)"}
+
 # ==========================================
 # 2. FONCTION DE TÉLÉCHARGEMENT ET D'ANALYSE
 # ==========================================
-def tester_api(url, fichier_temp):
-    print(f"   -> Test de l'URL : {url}")
+def telecharger_donnees_api(url, fichier_temp):
+    print(f"   -> Téléchargement depuis : {url}")
     try:
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, headers=HEADERS, timeout=60)
         if response.status_code == 200:
-            if response.content.startswith(b"\x1f\x8b"):
+            content = response.content
+            # Décompression si gzip
+            if content.startswith(b"\x1f\x8b"):
                 with open(fichier_temp, "wb") as f:
-                    f.write(gzip.decompress(response.content))
+                    f.write(gzip.decompress(content))
             else:
                 with open(fichier_temp, "wb") as f:
-                    f.write(response.content)
-            
+                    f.write(content)
+
             try:
-                df = pd.read_csv(fichier_temp, compression="gzip", sep=";")
-            except:
                 df = pd.read_csv(fichier_temp, sep=";")
-                
+            except Exception:
+                df = pd.read_csv(fichier_temp, compression="gzip", sep=";")
+
             col_date = "DATE" if "DATE" in df.columns else "date"
             df[col_date] = pd.to_datetime(df[col_date].astype(str).str.replace('-', ''), format='%Y%m%d', errors='coerce')
-            
+
             date_max = df[col_date].max()
             df_jour = df[df[col_date] == date_max].copy().drop_duplicates(subset=["LAMBY", "LAMBX"])
             return date_max, df_jour, df
         else:
+            print(f"      [Échec] Code statut HTTP: {response.status_code}")
             return None, None, None
-    except Exception:
+    except Exception as e:
+        print(f"      [Erreur de connexion] : {e}")
         return None, None, None
 
 # ==========================================
-# 3. COMPÉTITION DES API & PRÉPARATION CUMULS
+# 3. RÉCUPÉRATION ET PRÉPARATION DES DONNÉES
 # ==========================================
-print("1. Récupération des données et test des API...")
-date_1, df_jour_1, df_api_1 = tester_api(url_api_1, nom_fichier_api.replace(".csv", "_1.csv"))
-date_2, df_jour_2, df_api_2 = tester_api(url_api_2, nom_fichier_api.replace(".csv", "_2.csv"))
+print("1. Récupération des données Météo-France 2026...")
+derniere_date, df_jour, df_api = telecharger_donnees_api(URL_API_PRINCIPALE, nom_fichier_api)
+url_retenue = URL_API_PRINCIPALE
 
-if date_1 and date_2:
-    if date_2 > date_1:
-        derniere_date, df_jour, df_api, url_retenue = date_2, df_jour_2, df_api_2, url_api_2
-    else:
-        derniere_date, df_jour, df_api, url_retenue = date_1, df_jour_1, df_api_1, url_api_1
-elif date_1:
-    derniere_date, df_jour, df_api, url_retenue = date_1, df_jour_1, df_api_1, url_api_1
-elif date_2:
-    derniere_date, df_jour, df_api, url_retenue = date_2, df_jour_2, df_api_2, url_api_2
-else:
-    print("❌ Les deux API ont échoué.")
-    exit()
+# Secours automatique sur le S3 si l'URL data.gouv.fr ne répond pas
+if derniere_date is None:
+    print("   -> Échec du serveur principal. Tentative avec le miroir S3 Météo-France...")
+    derniere_date, df_jour, df_api = telecharger_donnees_api(URL_API_FALLBACK, nom_fichier_api)
+    url_retenue = URL_API_FALLBACK
+
+if derniere_date is None:
+    raise RuntimeError("❌ Impossible d'accéder aux données SIM2 2026 (Serveurs principal et miroir indisponibles).")
 
 date_propre = derniere_date.strftime("%d/%m/%Y")
 print(f"   -> Date retenue : {date_propre}")
-
-# Sauvegarde des infos pour le HTML
-with open(chemin_json, "w", encoding="utf-8") as f:
-    json.dump({"date": date_propre, "api_url": url_retenue}, f, ensure_ascii=False, indent=4)
 
 # Calculs des cumuls sur 15 jours
 print("   -> Calcul des cumuls sur 15 jours...")
@@ -102,7 +107,7 @@ col_pe = "PE_Q" if "PE_Q" in df_15j.columns else "PE"
 col_wg = "WG_RACINE_Q" if "WG_RACINE_Q" in df_jour.columns else "WG_RACINE"
 col_evap = "EVAP_Q" if "EVAP_Q" in df_jour.columns else "EVAP"
 
-df_15j["PLUIE_TOTALE"] = df_15j[col_preliq] + df_15j[col_prenei]
+df_15j["PLUIE_TOTALE"] = df_15j[col_preliq].fillna(0) + df_15j[col_prenei].fillna(0)
 df_cumuls = df_15j.groupby(["LAMBX", "LAMBY"])[["PLUIE_TOTALE", col_pe]].sum().reset_index()
 
 # ==========================================
@@ -120,12 +125,12 @@ for annee in range(1991, 2021):
         d = datetime(annee, derniere_date.month, derniere_date.day)
         liste_dates_historiques.append(int(d.strftime("%Y%m%d")))
     except ValueError:
-        pass
+        pass  # Prise en compte du 29 février (années bissextiles)
 
 df_hist = pd.read_parquet(dossier_parquet, filters=[("DATE", "in", liste_dates_historiques)])
 df_normale = df_hist.groupby(["LAMBX", "LAMBY"])["SWI"].mean().reset_index(name="SWI_NORMALE")
 
-# On intègre l'anomalie directement dans df_jour
+# Calcul de l'écart à la normale (%)
 df_jour = pd.merge(df_jour, df_normale, on=["LAMBX", "LAMBY"], how="inner")
 df_jour["ECART"] = ((df_jour["SWI"] - df_jour["SWI_NORMALE"]) / (df_jour["SWI_NORMALE"] + 1e-6)) * 100
 
@@ -133,7 +138,6 @@ df_jour["ECART"] = ((df_jour["SWI"] - df_jour["SWI_NORMALE"]) / (df_jour["SWI_NO
 # 5. GESTION DU FOND DE CARTE ET MASQUES (SIG)
 # ==========================================
 print("4. Préparation de la géométrie de la France...")
-# Ajustement des coordonnées
 if df_jour["LAMBY"].max() < 100000:
     df_jour["LAMBX"] *= 100
     df_jour["LAMBY"] *= 100
@@ -145,7 +149,6 @@ xmin, xmax = df_jour["LAMBX"].min() - 4000, df_jour["LAMBX"].max() + 4000
 ymin, ymax = df_jour["LAMBY"].min() - 4000, df_jour["LAMBY"].max() + 4000
 extent_raster = [xmin, xmax, ymin, ymax]
 
-# Téléchargement/Lecture des frontières
 if not os.path.exists(fichier_geojson):
     gdf_dep = gpd.read_file(url_geojson)
     gdf_dep.to_file(fichier_geojson, driver="GeoJSON")
@@ -174,7 +177,7 @@ def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar,
     else:
         im = ax.imshow(grille, origin="lower", cmap=cmap_name, extent=extent_raster, zorder=1)
 
-    # Superposition des masques et frontières
+    # Superposition masque blanc extérieur et contours départements
     gdf_masque.plot(ax=ax, facecolor="white", edgecolor="none", zorder=1.5)
     gdf_dep.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.6, alpha=0.8, zorder=2)
 
@@ -192,11 +195,10 @@ def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar,
     plt.close()
 
 # ==========================================
-# 7. ROUTEUR DE CARTES (AJOUTER/RETIRER ICI)
+# 7. EXÉCUTION DE LA GÉNÉRATION
 # ==========================================
 print("5. Création des cartes demandées...")
 
-# Liste des cartes à générer. Il suffit de commenter une ligne pour désactiver une carte.
 cartes_a_produire = [
     {
         "df_data": df_jour, "colonne": "SWI", "nom_fichier": "carte_swi_actuel.png", 
@@ -224,8 +226,16 @@ cartes_a_produire = [
     }
 ]
 
-# Boucle génératrice
 for config in cartes_a_produire:
     creer_et_sauvegarder_carte(**config)
 
-print("✅ Terminé ! Toutes les cartes et le JSON sont prêts pour GitHub Pages.")
+# Export du fichier de métadonnées JSON
+with open(chemin_json, "w", encoding="utf-8") as f:
+    json.dump({
+        "date": date_propre,
+        "derniere_mise_a_jour": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "api_url": url_retenue,
+        "cartes_disponibles": [c["nom_fichier"] for c in cartes_a_produire]
+    }, f, ensure_ascii=False, indent=4)
+
+print("✅ Terminé ! Toutes les cartes et le JSON ont été régénérés dans 'static/'.")

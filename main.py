@@ -23,12 +23,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 nom_fichier_api = os.path.join(BASE_DIR, "carte_swi_api.csv")
 fichier_geojson = os.path.join(BASE_DIR, "departements.geojson")
 
-# ID exact de la ressource QUOT_SIM2_2026 (Météo-France / data.gouv.fr)
-RESOURCE_ID_2026 = "4fac033c-43f7-4e5d-aaad-84dce887f12e"
+# ID exact de la ressource QUOT_SIM2_latest (data.gouv.fr)
+RESOURCE_ID_LATEST = "a2bbcf56-32c9-4821-b195-7b676c5854db"
 
 # API Principale (data.gouv.fr) et Fallback direct S3 Météo-France
-URL_API_PRINCIPALE = f"https://www.data.gouv.fr/fr/datasets/r/{RESOURCE_ID_2026}"
-URL_API_FALLBACK = "https://object.files.data.gouv.fr/meteofrance/data/synop/SIM2/QUOT_SIM2_2026.csv.gz"
+URL_API_PRINCIPALE = f"https://www.data.gouv.fr/fr/datasets/r/{RESOURCE_ID_LATEST}"
+URL_API_FALLBACK = "https://object.files.data.gouv.fr/meteofrance/data/synop/SIM2/QUOT_SIM2_latest.csv.gz"
 
 url_geojson = "https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements.geojson"
 
@@ -47,27 +47,36 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (GitHubActions/Automation Script)"}
 def telecharger_donnees_api(url, fichier_temp):
     print(f"   -> Téléchargement depuis : {url}")
     try:
-        response = requests.get(url, headers=HEADERS, timeout=60)
+        response = requests.get(url, headers=HEADERS, timeout=120, stream=True)
         if response.status_code == 200:
             content = response.content
-            # Décompression si gzip
+            # Décompression si format GZIP
             if content.startswith(b"\x1f\x8b"):
-                with open(fichier_temp, "wb") as f:
-                    f.write(gzip.decompress(content))
+                decompressed = gzip.decompress(content)
             else:
-                with open(fichier_temp, "wb") as f:
-                    f.write(content)
+                decompressed = content
 
-            try:
-                df = pd.read_csv(fichier_temp, sep=";")
-            except Exception:
-                df = pd.read_csv(fichier_temp, compression="gzip", sep=";")
+            with open(fichier_temp, "wb") as f:
+                f.write(decompressed)
 
-            col_date = "DATE" if "DATE" in df.columns else "date"
-            df[col_date] = pd.to_datetime(df[col_date].astype(str).str.replace('-', ''), format='%Y%m%d', errors='coerce')
+            df = pd.read_csv(fichier_temp, sep=";", low_memory=False)
 
-            date_max = df[col_date].max()
-            df_jour = df[df[col_date] == date_max].copy().drop_duplicates(subset=["LAMBY", "LAMBX"])
+            # Normalisation du nom de la colonne date
+            col_date = next((c for c in df.columns if c.upper() == "DATE"), "DATE")
+            df[col_date] = pd.to_datetime(
+                df[col_date].astype(str).str.replace('-', ''), 
+                format='%Y%m%d', 
+                errors='coerce'
+            )
+            df = df.dropna(subset=[col_date])
+
+            # Normalisation des coordonnées
+            col_x = next((c for c in df.columns if c.upper() in ["LAMBX", "LAMBX_Q"]), "LAMBX")
+            col_y = next((c for c in df.columns if c.upper() in ["LAMBY", "LAMBY_Q"]), "LAMBY")
+            df.rename(columns={col_x: "LAMBX", col_y: "LAMBY", col_date: "DATE"}, inplace=True)
+
+            date_max = df["DATE"].max()
+            df_jour = df[df["DATE"] == date_max].copy().drop_duplicates(subset=["LAMBY", "LAMBX"])
             return date_max, df_jour, df
         else:
             print(f"      [Échec] Code statut HTTP: {response.status_code}")
@@ -79,7 +88,7 @@ def telecharger_donnees_api(url, fichier_temp):
 # ==========================================
 # 3. RÉCUPÉRATION ET PRÉPARATION DES DONNÉES
 # ==========================================
-print("1. Récupération des données Météo-France 2026...")
+print("1. Récupération des données Météo-France SIM2 (latest)...")
 derniere_date, df_jour, df_api = telecharger_donnees_api(URL_API_PRINCIPALE, nom_fichier_api)
 url_retenue = URL_API_PRINCIPALE
 
@@ -90,22 +99,21 @@ if derniere_date is None:
     url_retenue = URL_API_FALLBACK
 
 if derniere_date is None:
-    raise RuntimeError("❌ Impossible d'accéder aux données SIM2 2026 (Serveurs principal et miroir indisponibles).")
+    raise RuntimeError("❌ Impossible d'accéder aux données SIM2 (Serveurs principal et miroir indisponibles).")
 
 date_propre = derniere_date.strftime("%d/%m/%Y")
 print(f"   -> Date retenue : {date_propre}")
 
 # Calculs des cumuls sur 15 jours
 print("   -> Calcul des cumuls sur 15 jours...")
-col_date = "DATE" if "DATE" in df_api.columns else "date"
 date_moins_15 = derniere_date - timedelta(days=14)
-df_15j = df_api[(df_api[col_date] >= date_moins_15) & (df_api[col_date] <= derniere_date)].copy()
+df_15j = df_api[(df_api["DATE"] >= date_moins_15) & (df_api["DATE"] <= derniere_date)].copy()
 
-col_preliq = "PRELIQ_Q" if "PRELIQ_Q" in df_15j.columns else "PRELIQ"
-col_prenei = "PRENEI_Q" if "PRENEI_Q" in df_15j.columns else "PRENEI"
-col_pe = "PE_Q" if "PE_Q" in df_15j.columns else "PE"
-col_wg = "WG_RACINE_Q" if "WG_RACINE_Q" in df_jour.columns else "WG_RACINE"
-col_evap = "EVAP_Q" if "EVAP_Q" in df_jour.columns else "EVAP"
+col_preliq = next((c for c in df_15j.columns if c.upper() in ["PRELIQ_Q", "PRELIQ"]), "PRELIQ")
+col_prenei = next((c for c in df_15j.columns if c.upper() in ["PRENEI_Q", "PRENEI"]), "PRENEI")
+col_pe     = next((c for c in df_15j.columns if c.upper() in ["PE_Q", "PE"]), "PE")
+col_wg     = next((c for c in df_jour.columns if c.upper() in ["WG_RACINE_Q", "WG_RACINE"]), "WG_RACINE")
+col_evap   = next((c for c in df_jour.columns if c.upper() in ["EVAP_Q", "EVAP"]), "EVAP")
 
 df_15j["PLUIE_TOTALE"] = df_15j[col_preliq].fillna(0) + df_15j[col_prenei].fillna(0)
 df_cumuls = df_15j.groupby(["LAMBX", "LAMBY"])[["PLUIE_TOTALE", col_pe]].sum().reset_index()
@@ -177,7 +185,7 @@ def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar,
     else:
         im = ax.imshow(grille, origin="lower", cmap=cmap_name, extent=extent_raster, zorder=1)
 
-    # Superposition masque blanc extérieur et contours départements
+    # Superposition du masque blanc extérieur et des limites de départements
     gdf_masque.plot(ax=ax, facecolor="white", edgecolor="none", zorder=1.5)
     gdf_dep.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=0.6, alpha=0.8, zorder=2)
 
@@ -186,8 +194,10 @@ def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar,
     ax.set_title(titre, fontsize=14, fontweight="bold")
     ax.axis("off") 
 
-    cbar = fig.colorbar(im, ax=ax, orientation="horizontal", fraction=0.04, pad=0.05, aspect=40, 
-                        ticks=bounds[1:-1] if is_anomalie else None)
+    cbar = fig.colorbar(
+        im, ax=ax, orientation="horizontal", fraction=0.04, pad=0.05, aspect=40, 
+        ticks=bounds[1:-1] if is_anomalie else None
+    )
     cbar.set_label(label_cbar, fontsize=12)
 
     chemin_complet = os.path.join(dossier_static, nom_fichier)
@@ -195,7 +205,7 @@ def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar,
     plt.close()
 
 # ==========================================
-# 7. EXÉCUTION DE LA GÉNÉRATION
+# 7. EXÉCUTION DE LA GÉNÉRATION DES CARTES
 # ==========================================
 print("5. Création des cartes demandées...")
 
@@ -218,11 +228,11 @@ cartes_a_produire = [
     },
     {
         "df_data": df_cumuls, "colonne": "PLUIE_TOTALE", "nom_fichier": "carte_pluie_15j.png", 
-        "titre": f"Cumul pluviométrique (15 derniers jours)", "label_cbar": "Précipitations (mm)", "cmap_name": "Blues"
+        "titre": "Cumul pluviométrique (15 derniers jours)", "label_cbar": "Précipitations (mm)", "cmap_name": "Blues"
     },
     {
         "df_data": df_cumuls, "colonne": col_pe, "nom_fichier": "carte_pe_15j.png", 
-        "titre": f"Cumul précipitations efficaces (15 derniers jours)", "label_cbar": "Précipitations efficaces (mm)", "cmap_name": "BrBG"
+        "titre": "Cumul précipitations efficaces (15 derniers jours)", "label_cbar": "Précipitations efficaces (mm)", "cmap_name": "BrBG"
     }
 ]
 

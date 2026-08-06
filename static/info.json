@@ -1,7 +1,7 @@
 {
-    "date": "01/08/2026",
-    "derniere_mise_a_jour": "2026-08-06 12:34:03",
-    "api_url": "https://www.data.gouv.fr/fr/datasets/r/4fac033c-43f7-4e5d-aaad-84dce887f12e",
+    "date": "04/08/2026",
+    "derniere_mise_a_jour": "2026-08-06 12:41:35",
+    "api_url": "https://www.data.gouv.fr/fr/datasets/r/a2bbcf56-32c9-4821-b195-7b676c5854db",
     "cartes_disponibles": [
         "carte_swi_actuel.png",
         "carte_engorgement.png",

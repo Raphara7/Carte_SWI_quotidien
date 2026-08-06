@@ -26,7 +26,7 @@ fichier_geojson = os.path.join(BASE_DIR, "departements.geojson")
 # ID exact de la ressource QUOT_SIM2_latest (data.gouv.fr)
 RESOURCE_ID_LATEST = "a2bbcf56-32c9-4821-b195-7b676c5854db"
 
-# API Principale (data.gouv.fr) et Fallback direct S3 Météo-France
+# API Unique : Ressource QUOT_SIM2_latest (data.gouv.fr) + Fallback miroir S3 de la même ressource
 URL_API_PRINCIPALE = f"https://www.data.gouv.fr/fr/datasets/r/{RESOURCE_ID_LATEST}"
 URL_API_FALLBACK = "https://object.files.data.gouv.fr/meteofrance/data/synop/SIM2/QUOT_SIM2_latest.csv.gz"
 
@@ -88,18 +88,18 @@ def telecharger_donnees_api(url, fichier_temp):
 # ==========================================
 # 3. RÉCUPÉRATION ET PRÉPARATION DES DONNÉES
 # ==========================================
-print("1. Récupération des données Météo-France SIM2 (latest)...")
+print("1. Récupération des données Météo-France QUOT_SIM2_latest...")
 derniere_date, df_jour, df_api = telecharger_donnees_api(URL_API_PRINCIPALE, nom_fichier_api)
 url_retenue = URL_API_PRINCIPALE
 
-# Secours automatique sur le S3 si l'URL data.gouv.fr ne répond pas
+# Secours automatique sur le miroir S3 latest si data.gouv.fr ne répond pas
 if derniere_date is None:
-    print("   -> Échec du serveur principal. Tentative avec le miroir S3 Météo-France...")
+    print("   -> Échec du serveur principal. Tentative avec le miroir S3 Météo-France (latest)...")
     derniere_date, df_jour, df_api = telecharger_donnees_api(URL_API_FALLBACK, nom_fichier_api)
     url_retenue = URL_API_FALLBACK
 
 if derniere_date is None:
-    raise RuntimeError("❌ Impossible d'accéder aux données SIM2 (Serveurs principal et miroir indisponibles).")
+    raise RuntimeError("❌ Impossible d'accéder aux données QUOT_SIM2_latest (Serveurs principal et miroir indisponibles).")
 
 date_propre = derniere_date.strftime("%d/%m/%Y")
 print(f"   -> Date retenue : {date_propre}")

@@ -1,5 +1,5 @@
 import os
-import gzip
+import io
 import requests
 import gdown
 import pandas as pd
@@ -26,8 +26,10 @@ fichier_geojson = os.path.join(BASE_DIR, "departements.geojson")
 # ID exact de la ressource QUOT_SIM2_latest (data.gouv.fr)
 RESOURCE_ID_LATEST = "a2bbcf56-32c9-4821-b195-7b676c5854db"
 
-# API Unique : Ressource QUOT_SIM2_latest (data.gouv.fr) + Fallback miroir S3 de la même ressource
-URL_API_PRINCIPALE = f"https://www.data.gouv.fr/fr/datasets/r/{RESOURCE_ID_LATEST}"
+# API REST Tabular de data.gouv.fr (endpoint CSV avec toutes les lignes)
+URL_API_PRINCIPALE = f"https://www.data.gouv.fr/api/resources/{RESOURCE_ID_LATEST}/data/csv/?page_size=all"
+
+# Fallback miroir S3 direct si l'API REST est indisponible ou en maintenance
 URL_API_FALLBACK = "https://object.files.data.gouv.fr/meteofrance/data/synop/SIM2/QUOT_SIM2_latest.csv.gz"
 
 url_geojson = "https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements.geojson"
@@ -39,29 +41,38 @@ dossier_static = os.path.join(BASE_DIR, "static")
 os.makedirs(dossier_static, exist_ok=True)
 chemin_json = os.path.join(dossier_static, "info.json")
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (GitHubActions/Automation Script)"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (GitHubActions/Automation Script)",
+    "Accept": "text/csv,application/json"
+}
 
 # ==========================================
-# 2. FONCTION DE TÉLÉCHARGEMENT ET D'ANALYSE
+# 2. FONCTION INTERROGEANT L'API REST
 # ==========================================
-def telecharger_donnees_api(url, fichier_temp):
-    print(f"   -> Téléchargement depuis : {url}")
+def interroger_api_data_gouv(url):
+    print(f"   -> Appel de l'API : {url}")
     try:
-        response = requests.get(url, headers=HEADERS, timeout=120, stream=True)
+        # Requete HTTP GET vers l'endpoint de l'API
+        response = requests.get(url, headers=HEADERS, timeout=180)
+        
         if response.status_code == 200:
-            content = response.content
-            # Décompression si format GZIP
-            if content.startswith(b"\x1f\x8b"):
-                decompressed = gzip.decompress(content)
+            # Lecture du flux CSV directement depuis la reponse texte de l'API
+            content_type = response.headers.get('Content-Type', '')
+            
+            # Gestion du cas compressé / brut
+            if response.content.startswith(b"\x1f\x8b"):
+                import gzip
+                decompressed = gzip.decompress(response.content)
+                df = pd.read_csv(io.BytesIO(decompressed), sep=";", low_memory=False)
             else:
-                decompressed = content
+                # L'API REST renvoie du text/csv
+                df = pd.read_csv(io.StringIO(response.text), sep=";", low_memory=False)
 
-            with open(fichier_temp, "wb") as f:
-                f.write(decompressed)
+            if df.empty:
+                print("      [Échec] L'API a renvoyé une réponse vide.")
+                return None, None, None
 
-            df = pd.read_csv(fichier_temp, sep=";", low_memory=False)
-
-            # Normalisation du nom de la colonne date
+            # Normalisation du nom de la colonne DATE
             col_date = next((c for c in df.columns if c.upper() == "DATE"), "DATE")
             df[col_date] = pd.to_datetime(
                 df[col_date].astype(str).str.replace('-', ''), 
@@ -70,36 +81,38 @@ def telecharger_donnees_api(url, fichier_temp):
             )
             df = df.dropna(subset=[col_date])
 
-            # Normalisation des coordonnées
+            # Normalisation des coordonnées spatiales Lambert
             col_x = next((c for c in df.columns if c.upper() in ["LAMBX", "LAMBX_Q"]), "LAMBX")
             col_y = next((c for c in df.columns if c.upper() in ["LAMBY", "LAMBY_Q"]), "LAMBY")
             df.rename(columns={col_x: "LAMBX", col_y: "LAMBY", col_date: "DATE"}, inplace=True)
 
             date_max = df["DATE"].max()
             df_jour = df[df["DATE"] == date_max].copy().drop_duplicates(subset=["LAMBY", "LAMBX"])
+            
             return date_max, df_jour, df
         else:
-            print(f"      [Échec] Code statut HTTP: {response.status_code}")
+            print(f"      [Échec API] Code statut HTTP: {response.status_code}")
             return None, None, None
+
     except Exception as e:
-        print(f"      [Erreur de connexion] : {e}")
+        print(f"      [Erreur de connexion à l'API] : {e}")
         return None, None, None
 
 # ==========================================
 # 3. RÉCUPÉRATION ET PRÉPARATION DES DONNÉES
 # ==========================================
-print("1. Récupération des données Météo-France QUOT_SIM2_latest...")
-derniere_date, df_jour, df_api = telecharger_donnees_api(URL_API_PRINCIPALE, nom_fichier_api)
+print("1. Interrogation de l'API REST data.gouv.fr (QUOT_SIM2_latest)...")
+derniere_date, df_jour, df_api = interroger_api_data_gouv(URL_API_PRINCIPALE)
 url_retenue = URL_API_PRINCIPALE
 
-# Secours automatique sur le miroir S3 latest si data.gouv.fr ne répond pas
+# Secours automatique sur le miroir S3 si l'API REST est indisponible
 if derniere_date is None:
-    print("   -> Échec du serveur principal. Tentative avec le miroir S3 Météo-France (latest)...")
-    derniere_date, df_jour, df_api = telecharger_donnees_api(URL_API_FALLBACK, nom_fichier_api)
+    print("   -> Échec de l'API REST data.gouv.fr. Bascule vers le miroir S3 Météo-France...")
+    derniere_date, df_jour, df_api = interroger_api_data_gouv(URL_API_FALLBACK)
     url_retenue = URL_API_FALLBACK
 
 if derniere_date is None:
-    raise RuntimeError("❌ Impossible d'accéder aux données QUOT_SIM2_latest (Serveurs principal et miroir indisponibles).")
+    raise RuntimeError("❌ Impossible d'accéder aux données via l'API REST ni via le miroir S3.")
 
 date_propre = derniere_date.strftime("%d/%m/%Y")
 print(f"   -> Date retenue : {date_propre}")
@@ -248,4 +261,4 @@ with open(chemin_json, "w", encoding="utf-8") as f:
         "cartes_disponibles": [c["nom_fichier"] for c in cartes_a_produire]
     }, f, ensure_ascii=False, indent=4)
 
-print("✅ Terminé ! Toutes les cartes et le JSON ont été régénérés dans 'static/'.")
+print("✅ Terminé ! L'API REST a été interrogée et toutes les cartes ont été régénérées dans 'static/'.")

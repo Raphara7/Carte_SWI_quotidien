@@ -1,37 +1,29 @@
-#  Suivi Anomalie de l'Indice d'Humidité des Sols (SWI) en France
+# Cartes Agroclimatiques (Météo-France)
 
-Ce projet génère quotidiennement et de manière entièrement automatisée une carte des anomalies d'humidité des sols (Soil Wetness Index - SWI) pour la France métropolitaine. Il compare la situation actuelle aux normales climatologiques de la période 1991-2020.
+Ce script Python génère six cartes météorologiques et agronomiques sur l'état des sols en France. Il se base sur le modèle SIM2 de Météo-France.
 
- **[Voir la carte mise à jour automatiquement ici](https://raphara7.github.io/Carte_SWI_quotidien/)** 
+## Source des données
 
---- 
+Le script utilise deux sources de données :
+1. **Données du jour** : Fichier `.parquet` hébergé sur le stockage S3 de data.gouv.fr.
+2. **Données historiques (1991-2020)** : Fichiers `.parquet` stockés sur un dossier Google Drive (pour le calcul des anomalies).
 
-##  Pipeline
+## Cartes produites
 
-Ce dépôt utilise **GitHub Actions** pour exécuter un script Python tous les matins. Voici ce que fait le robot en arrière-plan :
+Les images sont générées au format PNG dans le dossier `static/` :
+* **carte_swi_actuel.png** : Indice d'humidité des sols (SWI).
+* **carte_engorgement.png** : Teneur en eau et engorgement des sols.
+* **carte_anomalie.png** : Écart du SWI par rapport à la normale 1991-2020.
+* **carte_etr.png** : Évapotranspiration réelle (ETR).
+* **carte_pluie_15j.png** : Cumul pluviométrique sur 15 jours.
+* **carte_pe_15j.png** : Cumul des précipitations efficaces sur 15 jours.
 
-1. **Extraction de la situation actuelle (Stratégie Double API)** : Afin de pallier les éventuels retards de publication des serveurs de Météo-France, le script teste automatiquement deux points de terminaison officiels sur data.gouv.fr (l'API historique de référence et l'API alternative issue des données de changement climatique SIM. Il compare les dates maximales disponibles et **retient dynamiquement l'API qui fournit la donnée la plus récente**. La méthode s'inspire des suivis hydrologiques institutionnels, à l'instar de ceux documentés par la DREAL Bretagne.
-2. **Préparation et récupération de l'historique** : L'historique de référence 1991-2020 provient de [meteo.data.gouv.fr](https://meteo.data.gouv.fr/datasets/6569b27598256cc583c917a7) sous forme de fichiers CSV. Pour l'analyse, ce jeu de données a été nettoyé et converti au format compressé **Parquet** (découpé par année). Pour contourner les limites de stockage de GitHub, ces données optimisées sont hébergées sur un Google Drive. Le script télécharge ces données automatiquement via la librairie `gdown`.
-3. **Calcul de l'anomalie** : Le code isole les données du jour J dans l'historique Parquet, calcule la moyenne, puis détermine l'écart relatif en pourcentage de la journée actuelle.
-4. **Génération de la carte** : Utilisation de `matplotlib` et `geopandas` pour dessiner un raster calqué sur les limites administratives avec la palette de couleurs officielle. Un fichier `info.json` est également généré pour afficher dynamiquement la source et la date exacte sur la page web.
-5. **Déploiement Web** : L'image finale (`static/carte.png`) et les métadonnées sont publiées sur la branche `gh-pages` pour alimenter un site web statique en HTML.
+Un fichier `info.json` est produit dans le même dossier. Il contient la date des données et la liste des cartes.
 
----
+## Installation et Prérequis
 
-## 🛠️ Technologies utilisées
+Python 3.x est requis.
 
-* **Langage :** Python 3.10
-* **Data Science & SIG :** `pandas`, `numpy`, `pyarrow`, `geopandas`, `shapely`
-* **Dataviz :** `matplotlib`
-* **Web & CI/CD :** HTML/CSS, JavaScript (pour l'affichage dynamique de la source), GitHub Actions, GitHub Pages
-
----
-
-## 💻 Utilisation en local (Pour les développeurs)
-
-Si vous souhaitez faire tourner ce projet sur votre propre machine :
-
-1. Clonez ce dépôt :
-   ```bash
-   git clone [https://github.com/VOTRE_NOM/VOTRE_DEPOT.git](https://github.com/VOTRE_NOM/VOTRE_DEPOT.git)
-   cd VOTRE_DEPOT
+Installez les dépendances avec la commande suivante :
+```bash
+pip install -r requirements.txt

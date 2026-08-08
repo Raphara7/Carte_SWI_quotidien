@@ -1,7 +1,7 @@
 {
-    "date": "04/08/2026",
-    "derniere_mise_a_jour": "2026-08-06 12:47:19",
-    "api_url": "https://www.data.gouv.fr/fr/datasets/r/a2bbcf56-32c9-4821-b195-7b676c5854db",
+    "date": "07/08/2026",
+    "derniere_mise_a_jour": "2026-08-08 14:09:51",
+    "source_donnees": "https://hydra.s3.rbx.io.cloud.ovh.net/parquet/a2bbcf56-32c9-4821-b195-7b676c5854db.parquet",
     "cartes_disponibles": [
         "carte_swi_actuel.png",
         "carte_engorgement.png",

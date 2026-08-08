@@ -1,6 +1,4 @@
 import os
-import gzip
-import requests
 import gdown
 import pandas as pd
 import numpy as np
@@ -20,15 +18,10 @@ warnings.filterwarnings('ignore')
 # ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-nom_fichier_api = os.path.join(BASE_DIR, "carte_swi_api.csv")
 fichier_geojson = os.path.join(BASE_DIR, "departements.geojson")
 
-# ID exact de la ressource QUOT_SIM2_latest (data.gouv.fr)
-RESOURCE_ID_LATEST = "a2bbcf56-32c9-4821-b195-7b676c5854db"
-
-# API Unique : Ressource QUOT_SIM2_latest (data.gouv.fr) + Fallback miroir S3 de la même ressource
-URL_API_PRINCIPALE = f"https://www.data.gouv.fr/fr/datasets/r/{RESOURCE_ID_LATEST}"
-URL_API_FALLBACK = "https://object.files.data.gouv.fr/meteofrance/data/synop/SIM2/QUOT_SIM2_latest.csv.gz"
+# Lien direct vers le stockage brut (Parquet) sur OVH/data.gouv.fr
+URL_PARQUET = "https://hydra.s3.rbx.io.cloud.ovh.net/parquet/a2bbcf56-32c9-4821-b195-7b676c5854db.parquet"
 
 url_geojson = "https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements.geojson"
 
@@ -39,70 +32,33 @@ dossier_static = os.path.join(BASE_DIR, "static")
 os.makedirs(dossier_static, exist_ok=True)
 chemin_json = os.path.join(dossier_static, "info.json")
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (GitHubActions/Automation Script)"}
-
 # ==========================================
-# 2. FONCTION DE TÉLÉCHARGEMENT ET D'ANALYSE
+# 2. RÉCUPÉRATION ET PRÉPARATION DES DONNÉES
 # ==========================================
-def telecharger_donnees_api(url, fichier_temp):
-    print(f"   -> Téléchargement depuis : {url}")
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=120, stream=True)
-        if response.status_code == 200:
-            content = response.content
-            # Décompression si format GZIP
-            if content.startswith(b"\x1f\x8b"):
-                decompressed = gzip.decompress(content)
-            else:
-                decompressed = content
+print("1. Téléchargement et lecture des données récentes (S3 Parquet)...")
+try:
+    df_api = pd.read_parquet(URL_PARQUET)
+except Exception as e:
+    raise RuntimeError(f"❌ Impossible d'accéder aux données Parquet : {e}")
 
-            with open(fichier_temp, "wb") as f:
-                f.write(decompressed)
+# Normalisation des colonnes principales
+col_date = next((c for c in df_api.columns if c.upper() == "DATE"), "DATE")
+col_x = next((c for c in df_api.columns if c.upper() in ["LAMBX", "LAMBX_Q"]), "LAMBX")
+col_y = next((c for c in df_api.columns if c.upper() in ["LAMBY", "LAMBY_Q"]), "LAMBY")
+df_api.rename(columns={col_x: "LAMBX", col_y: "LAMBY", col_date: "DATE"}, inplace=True)
 
-            df = pd.read_csv(fichier_temp, sep=";", low_memory=False)
+# Formatage des dates
+if not pd.api.types.is_datetime64_any_dtype(df_api["DATE"]):
+    df_api["DATE"] = pd.to_datetime(df_api["DATE"].astype(str).str.replace('-', ''), format='%Y%m%d', errors='coerce')
 
-            # Normalisation du nom de la colonne date
-            col_date = next((c for c in df.columns if c.upper() == "DATE"), "DATE")
-            df[col_date] = pd.to_datetime(
-                df[col_date].astype(str).str.replace('-', ''), 
-                format='%Y%m%d', 
-                errors='coerce'
-            )
-            df = df.dropna(subset=[col_date])
+df_api = df_api.dropna(subset=["DATE", "LAMBX", "LAMBY"])
 
-            # Normalisation des coordonnées
-            col_x = next((c for c in df.columns if c.upper() in ["LAMBX", "LAMBX_Q"]), "LAMBX")
-            col_y = next((c for c in df.columns if c.upper() in ["LAMBY", "LAMBY_Q"]), "LAMBY")
-            df.rename(columns={col_x: "LAMBX", col_y: "LAMBY", col_date: "DATE"}, inplace=True)
-
-            date_max = df["DATE"].max()
-            df_jour = df[df["DATE"] == date_max].copy().drop_duplicates(subset=["LAMBY", "LAMBX"])
-            return date_max, df_jour, df
-        else:
-            print(f"      [Échec] Code statut HTTP: {response.status_code}")
-            return None, None, None
-    except Exception as e:
-        print(f"      [Erreur de connexion] : {e}")
-        return None, None, None
-
-# ==========================================
-# 3. RÉCUPÉRATION ET PRÉPARATION DES DONNÉES
-# ==========================================
-print("1. Récupération des données Météo-France QUOT_SIM2_latest...")
-derniere_date, df_jour, df_api = telecharger_donnees_api(URL_API_PRINCIPALE, nom_fichier_api)
-url_retenue = URL_API_PRINCIPALE
-
-# Secours automatique sur le miroir S3 latest si data.gouv.fr ne répond pas
-if derniere_date is None:
-    print("   -> Échec du serveur principal. Tentative avec le miroir S3 Météo-France (latest)...")
-    derniere_date, df_jour, df_api = telecharger_donnees_api(URL_API_FALLBACK, nom_fichier_api)
-    url_retenue = URL_API_FALLBACK
-
-if derniere_date is None:
-    raise RuntimeError("❌ Impossible d'accéder aux données QUOT_SIM2_latest (Serveurs principal et miroir indisponibles).")
-
+# Extraction de la date max
+derniere_date = df_api["DATE"].max()
 date_propre = derniere_date.strftime("%d/%m/%Y")
 print(f"   -> Date retenue : {date_propre}")
+
+df_jour = df_api[df_api["DATE"] == derniere_date].copy().drop_duplicates(subset=["LAMBY", "LAMBX"])
 
 # Calculs des cumuls sur 15 jours
 print("   -> Calcul des cumuls sur 15 jours...")
@@ -119,7 +75,7 @@ df_15j["PLUIE_TOTALE"] = df_15j[col_preliq].fillna(0) + df_15j[col_prenei].filln
 df_cumuls = df_15j.groupby(["LAMBX", "LAMBY"])[["PLUIE_TOTALE", col_pe]].sum().reset_index()
 
 # ==========================================
-# 4. HISTORIQUE GOOGLE DRIVE & ANOMALIE
+# 3. HISTORIQUE GOOGLE DRIVE & ANOMALIE
 # ==========================================
 print("2. Téléchargement de l'historique Parquet (Google Drive)...")
 os.makedirs(dossier_parquet, exist_ok=True)
@@ -143,7 +99,7 @@ df_jour = pd.merge(df_jour, df_normale, on=["LAMBX", "LAMBY"], how="inner")
 df_jour["ECART"] = ((df_jour["SWI"] - df_jour["SWI_NORMALE"]) / (df_jour["SWI_NORMALE"] + 1e-6)) * 100
 
 # ==========================================
-# 5. GESTION DU FOND DE CARTE ET MASQUES (SIG)
+# 4. GESTION DU FOND DE CARTE ET MASQUES (SIG)
 # ==========================================
 print("4. Préparation de la géométrie de la France...")
 if df_jour["LAMBY"].max() < 100000:
@@ -170,7 +126,7 @@ masque_exterieur = bounding_box.difference(france_geom)
 gdf_masque = gpd.GeoDataFrame(geometry=[masque_exterieur], crs=epsg_code)
 
 # ==========================================
-# 6. FONCTION MODULAIRE DE GÉNÉRATION DE CARTES
+# 5. FONCTION MODULAIRE DE GÉNÉRATION DE CARTES
 # ==========================================
 def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar, cmap_name="viridis", is_anomalie=False):
     print(f"   -> Génération de : {nom_fichier}...")
@@ -205,7 +161,7 @@ def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar,
     plt.close()
 
 # ==========================================
-# 7. EXÉCUTION DE LA GÉNÉRATION DES CARTES
+# 6. EXÉCUTION DE LA GÉNÉRATION DES CARTES
 # ==========================================
 print("5. Création des cartes demandées...")
 
@@ -244,8 +200,8 @@ with open(chemin_json, "w", encoding="utf-8") as f:
     json.dump({
         "date": date_propre,
         "derniere_mise_a_jour": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "api_url": url_retenue,
+        "source_donnees": URL_PARQUET,
         "cartes_disponibles": [c["nom_fichier"] for c in cartes_a_produire]
     }, f, ensure_ascii=False, indent=4)
 
-print("✅ Terminé ! Toutes les cartes et le JSON ont été régénérés dans 'static/'.")
+print("✅ Terminé ! Le fichier Parquet a été traité et toutes les cartes ont été générées dans 'static/'.")

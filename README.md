@@ -9,7 +9,7 @@ Le script utilise deux sources de données :
 2. **Données historiques (1991-2020)** : Fichiers `.parquet` stockés sur un dossier Google Drive (pour le calcul des anomalies).
 
 ## Cartes produites
-
+https://raphara7.github.io/Carte_SWI_quotidien/
 Les images sont générées au format PNG dans le dossier `static/` :
 * **carte_swi_actuel.png** : Indice d'humidité des sols (SWI).
 * **carte_engorgement.png** : Teneur en eau et engorgement des sols.

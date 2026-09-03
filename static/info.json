@@ -1,6 +1,6 @@
 {
-    "date": "01/09/2026",
-    "derniere_mise_a_jour": "2026-09-02 12:23:58",
+    "date": "02/09/2026",
+    "derniere_mise_a_jour": "2026-09-03 12:22:29",
     "source_donnees": "https://hydra.s3.rbx.io.cloud.ovh.net/parquet/a2bbcf56-32c9-4821-b195-7b676c5854db.parquet",
     "cartes_disponibles": [
         "carte_swi_actuel.png",

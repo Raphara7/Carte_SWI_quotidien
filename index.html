@@ -54,8 +54,18 @@
 
         .sidebar h2 {
             font-size: 1.1em;
-            margin: 0 0 15px 20px;
+            margin: 0 0 10px 20px;
             color: #555;
+        }
+
+        /* Sous-titres du menu */
+        .menu-category {
+            font-size: 0.8em;
+            font-weight: bold;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin: 20px 0 5px 20px;
         }
 
         .menu-list {
@@ -70,6 +80,7 @@
             border-bottom: 1px solid #eee;
             transition: background-color 0.2s, border-left 0.2s;
             border-left: 4px solid transparent;
+            font-size: 0.95em;
         }
 
         .menu-item:hover {
@@ -169,6 +180,8 @@
         <!-- Barre latérale avec le menu -->
         <nav class="sidebar">
             <h2>Sélectionnez une carte</h2>
+            
+            <div class="menu-category">Hydrologie & Météo</div>
             <ul class="menu-list">
                 <li class="menu-item active" data-src="static/carte_swi_actuel.png" data-title="Humidité des sols (SWI) actuelle">
                     Humidité des sols (SWI) actuelle
@@ -180,13 +193,26 @@
                     Anomalie humidité des sols (SWI)
                 </li>
                 <li class="menu-item" data-src="static/carte_etr.png" data-title="Evapotranspiration réelle (ETR)">
-                    Evapotranspiration réelle (ETR) actuelle
+                    Evapotranspiration réelle (ETR)
                 </li>
                 <li class="menu-item" data-src="static/carte_pluie_15j.png" data-title="Cumul pluviométrique (15 derniers jours)">
-                    Cumul pluviométrique depuis 15 j.
+                    Cumul pluviométrique (15 j.)
                 </li>
                 <li class="menu-item" data-src="static/carte_pe_15j.png" data-title="Cumul précipitations efficaces (15 derniers jours)">
-                    Cumul précipitations efficaces depuis 15 j.
+                    Précipitations efficaces (15 j.)
+                </li>
+            </ul>
+
+            <div class="menu-category">Agronomie & Sols</div>
+            <ul class="menu-list">
+                <li class="menu-item" data-src="static/carte_pf_portance.png" data-title="Indice de rétention en eau (pF)">
+                    Indice de rétention (pF) / Portance
+                </li>
+                <li class="menu-item" data-src="static/carte_succion_kpa.png" data-title="Force de succion matricielle (|ψ|)">
+                    Force de succion matricielle (kPa)
+                </li>
+                <li class="menu-item" data-src="static/carte_argile_ecoclimap.png" data-title="Teneur en argile estimée des sols (ECOCLIMAP)">
+                    Teneur en argile (ECOCLIMAP)
                 </li>
             </ul>
         </nav>
@@ -195,7 +221,7 @@
         <main class="content">
             <h2 class="map-title" id="display-title">Humidité des sols (SWI) actuelle</h2>
             
-            <img id="map-image" src="static/carte_swi_actuel.png" alt="Carte sélectionnée">
+            <img id="map-image" src="static/carte_swi_actuel.png" alt="Humidité des sols (SWI) actuelle">
 
             <!-- Zone de texte remplie automatiquement par JavaScript -->
             <div class="api-info">
@@ -237,11 +263,12 @@
         fetch('static/info.json')
             .then(response => response.json())
             .then(data => {
-                const apiText = `Données du <strong>${data.date}</strong>.<br>Source (API la plus récente sélectionnée) : <a class="api-link" href="${data.api_url}" target="_blank">${data.api_url}</a>`;
+                // Modification ici : data.source_donnees au lieu de data.api_url pour correspondre à Python
+                const apiText = `Données du <strong>${data.date}</strong>.<br>Source brute : <a class="api-link" href="${data.source_donnees}" target="_blank">${data.source_donnees}</a>`;
                 document.getElementById('info-api').innerHTML = apiText;
             })
             .catch(error => {
-                console.error('Erreur lors du chargement des infos API:', error);
+                console.error('Erreur lors du chargement des infos JSON:', error);
                 document.getElementById('info-api').innerText = "Source des données : Météo-France (data.gouv.fr)";
             });
     </script>

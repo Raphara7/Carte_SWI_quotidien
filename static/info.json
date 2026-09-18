@@ -1,7 +1,11 @@
 {
     "date": "16/09/2026",
-    "derniere_mise_a_jour": "2026-09-18 09:50:47",
+    "derniere_mise_a_jour": "2026-09-18 10:34:05",
     "source_donnees": "https://hydra.s3.rbx.io.cloud.ovh.net/parquet/a2bbcf56-32c9-4821-b195-7b676c5854db.parquet",
+    "terranimo_params": {
+        "charge_kg": 4000.0,
+        "pression_bar": 1.0
+    },
     "cartes_disponibles": [
         "carte_swi_actuel.png",
         "carte_engorgement.png",
@@ -11,6 +15,7 @@
         "carte_pe_15j.png",
         "carte_argile_ecoclimap.png",
         "carte_pf_portance.png",
-        "carte_succion_kpa.png"
+        "carte_succion_kpa.png",
+        "carte_praticabilite_actuel.png"
     ]
 }

@@ -44,7 +44,7 @@
 
         /* Barre latérale (Menu) */
         .sidebar {
-            width: 280px;
+            width: 290px;
             background-color: #ffffff;
             border-right: 1px solid #ddd;
             padding: 20px 0;
@@ -205,6 +205,9 @@
 
             <div class="menu-category">Agronomie & Sols</div>
             <ul class="menu-list">
+                <li class="menu-item" data-src="static/carte_praticabilite_actuel.png" data-title="Décision : Praticabilité des sols agricoles (Terranimo)">
+                    Décision : Praticabilité (Terranimo)
+                </li>
                 <li class="menu-item" data-src="static/carte_pf_portance.png" data-title="Indice de rétention en eau (pF)">
                     Indice de rétention (pF) / Portance
                 </li>
@@ -263,7 +266,6 @@
         fetch('static/info.json')
             .then(response => response.json())
             .then(data => {
-                // Modification ici : data.source_donnees au lieu de data.api_url pour correspondre à Python
                 const apiText = `Données du <strong>${data.date}</strong>.<br>Source brute : <a class="api-link" href="${data.source_donnees}" target="_blank">${data.source_donnees}</a>`;
                 document.getElementById('info-api').innerHTML = apiText;
             })

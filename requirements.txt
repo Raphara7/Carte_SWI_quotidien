@@ -1,7 +1,8 @@
-requests
-gdown
 pandas
 numpy
 matplotlib
-pyarrow
 geopandas
+shapely
+gdown
+pyarrow
+fastparquet

@@ -1,6 +1,6 @@
 {
     "date": "16/09/2026",
-    "derniere_mise_a_jour": "2026-09-17 12:53:55",
+    "derniere_mise_a_jour": "2026-09-18 09:50:47",
     "source_donnees": "https://hydra.s3.rbx.io.cloud.ovh.net/parquet/a2bbcf56-32c9-4821-b195-7b676c5854db.parquet",
     "cartes_disponibles": [
         "carte_swi_actuel.png",
@@ -8,6 +8,9 @@
         "carte_anomalie.png",
         "carte_etr.png",
         "carte_pluie_15j.png",
-        "carte_pe_15j.png"
+        "carte_pe_15j.png",
+        "carte_argile_ecoclimap.png",
+        "carte_pf_portance.png",
+        "carte_succion_kpa.png"
     ]
 }

@@ -49,11 +49,16 @@ col_x = next((c for c in df_api.columns if c.upper() in ["LAMBX", "LAMBX_Q"]), "
 col_y = next((c for c in df_api.columns if c.upper() in ["LAMBY", "LAMBY_Q"]), "LAMBY")
 df_api.rename(columns={col_x: "LAMBX", col_y: "LAMBY", col_date: "DATE"}, inplace=True)
 
-# Formatage des dates
+# Formatage des dates et nettoyage
 if not pd.api.types.is_datetime64_any_dtype(df_api["DATE"]):
     df_api["DATE"] = pd.to_datetime(df_api["DATE"].astype(str).str.replace('-', ''), format='%Y%m%d', errors='coerce')
 
 df_api = df_api.dropna(subset=["DATE", "LAMBX", "LAMBY"])
+
+# ⚠️ SÉCURITÉ : Conversion immédiate en mètres avant toute manipulation
+if df_api["LAMBY"].max() < 100000:
+    df_api["LAMBX"] *= 100
+    df_api["LAMBY"] *= 100
 
 # Extraction de la date max
 derniere_date = df_api["DATE"].max()
@@ -81,15 +86,19 @@ df_cumuls = df_15j.groupby(["LAMBX", "LAMBY"])[["PLUIE_TOTALE", col_pe]].sum().r
 # ==========================================
 print("2. Récupération des fichiers externes (Drive)...")
 
-# Téléchargement de la grille ECOCLIMAP
+# A. Téléchargement de la grille ECOCLIMAP
 if not os.path.exists(fichier_ecoclimap):
     print("   -> Téléchargement de grille_ecoclimap_safran.parquet...")
     url_eco = f'https://drive.google.com/uc?id={id_fichier_ecoclimap}'
     gdown.download(url_eco, fichier_ecoclimap, quiet=False)
 
 df_stat = pd.read_parquet(fichier_ecoclimap)
+# SÉCURITÉ ECOCLIMAP : Conversion en mètres si nécessaire
+if df_stat["LAMBY"].max() < 100000:
+    df_stat["LAMBX"] *= 100
+    df_stat["LAMBY"] *= 100
 
-# Téléchargement de l'historique Parquet
+# B. Téléchargement de l'historique Parquet
 os.makedirs(dossier_parquet, exist_ok=True)
 lien_drive_hist = f"https://drive.google.com/drive/folders/{id_dossier_drive_historique}?usp=sharing"
 gdown.download_folder(url=lien_drive_hist, output=dossier_parquet, quiet=False, use_cookies=False)
@@ -103,8 +112,13 @@ for annee in range(1991, 2021):
     except ValueError:
         pass  # Prise en compte du 29 février
 
-# Fusion avec l'historique pour l'écart à la normale
 df_hist = pd.read_parquet(dossier_parquet, filters=[("DATE", "in", liste_dates_historiques)])
+# SÉCURITÉ HISTORIQUE : Conversion en mètres si nécessaire
+if df_hist["LAMBY"].max() < 100000:
+    df_hist["LAMBX"] *= 100
+    df_hist["LAMBY"] *= 100
+
+# Calcul de la normale et fusion
 df_normale = df_hist.groupby(["LAMBX", "LAMBY"])["SWI"].mean().reset_index(name="SWI_NORMALE")
 df_jour = pd.merge(df_jour, df_normale, on=["LAMBX", "LAMBY"], how="inner")
 df_jour["ECART"] = ((df_jour["SWI"] - df_jour["SWI_NORMALE"]) / (df_jour["SWI_NORMALE"] + 1e-6)) * 100
@@ -112,27 +126,26 @@ df_jour["ECART"] = ((df_jour["SWI"] - df_jour["SWI_NORMALE"]) / (df_jour["SWI_NO
 # Fusion avec ECOCLIMAP pour Terranimo (Portance / Succion)
 df_jour = pd.merge(df_jour, df_stat, on=["LAMBX", "LAMBY"], how="inner")
 
-# A. Teneur en argile (%)
+if df_jour.empty:
+    raise ValueError("Erreur : La fusion des données a généré un tableau vide. Vérifiez l'échelle des coordonnées (LAMBX/LAMBY).")
+
+# Calculs des indices Terranimo
+# 1. Teneur en argile (%)
 df_jour["CLAY_PCT"] = np.clip((df_jour["B"] - 3.5) / 0.137, 0.0, 100.0)
 
-# B. Indice de succion (pF)
+# 2. Indice de succion (pF)
 swi_safe = np.clip(df_jour["SWI"].values, 0.0, 1.2)
 b_norm = df_jour["B"].values / 5.0
 pf = np.where(swi_safe <= 1.0, 4.2 - 2.2 * (swi_safe ** (1.0 / b_norm)), 2.0 - 1.0 * (swi_safe - 1.0))
 df_jour["PF"] = np.clip(pf, 0.8, 4.5)
 
-# C. Succion matricielle en kPa
+# 3. Succion matricielle en kPa
 df_jour["SUCCION_KPA"] = (10.0 ** df_jour["PF"]) / 10.0
 
 # ==========================================
 # 4. GESTION DU FOND DE CARTE ET MASQUES (SIG)
 # ==========================================
 print("4. Préparation de la géométrie de la France...")
-if df_jour["LAMBY"].max() < 100000:
-    df_jour["LAMBX"] *= 100
-    df_jour["LAMBY"] *= 100
-    df_cumuls["LAMBX"] *= 100
-    df_cumuls["LAMBY"] *= 100
 
 epsg_code = 2154 if df_jour["LAMBY"].max() > 5000000 else 27572
 xmin, xmax = df_jour["LAMBX"].min() - 4000, df_jour["LAMBX"].max() + 4000

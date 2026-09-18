@@ -34,6 +34,11 @@ dossier_static = os.path.join(BASE_DIR, "static")
 os.makedirs(dossier_static, exist_ok=True)
 chemin_json = os.path.join(dossier_static, "info.json")
 
+# Paramètres engin Terranimo (Charge: 4000 kg, Pression: 1 bar)
+CHARGE_KG = 4000.0
+PRESSION_BAR = 1.0
+CONTRAINTE_BAR = 0.42 * PRESSION_BAR + (CHARGE_KG / 10000.0) * 1.03  # 0.832 bar
+
 # ==========================================
 # 2. RÉCUPÉRATION DES DONNÉES SIM2 (MÉTÉO-FRANCE)
 # ==========================================
@@ -55,7 +60,7 @@ if not pd.api.types.is_datetime64_any_dtype(df_api["DATE"]):
 
 df_api = df_api.dropna(subset=["DATE", "LAMBX", "LAMBY"])
 
-# ⚠️ SÉCURITÉ : Conversion immédiate en mètres avant toute manipulation
+# SÉCURITÉ : Conversion immédiate en mètres avant toute manipulation
 if df_api["LAMBY"].max() < 100000:
     df_api["LAMBX"] *= 100
     df_api["LAMBY"] *= 100
@@ -93,7 +98,6 @@ if not os.path.exists(fichier_ecoclimap):
     gdown.download(url_eco, fichier_ecoclimap, quiet=False)
 
 df_stat = pd.read_parquet(fichier_ecoclimap)
-# SÉCURITÉ ECOCLIMAP : Conversion en mètres si nécessaire
 if df_stat["LAMBY"].max() < 100000:
     df_stat["LAMBX"] *= 100
     df_stat["LAMBY"] *= 100
@@ -113,7 +117,6 @@ for annee in range(1991, 2021):
         pass  # Prise en compte du 29 février
 
 df_hist = pd.read_parquet(dossier_parquet, filters=[("DATE", "in", liste_dates_historiques)])
-# SÉCURITÉ HISTORIQUE : Conversion en mètres si nécessaire
 if df_hist["LAMBY"].max() < 100000:
     df_hist["LAMBX"] *= 100
     df_hist["LAMBY"] *= 100
@@ -129,7 +132,9 @@ df_jour = pd.merge(df_jour, df_stat, on=["LAMBX", "LAMBY"], how="inner")
 if df_jour.empty:
     raise ValueError("Erreur : La fusion des données a généré un tableau vide. Vérifiez l'échelle des coordonnées (LAMBX/LAMBY).")
 
-# Calculs des indices Terranimo
+# ==========================================
+# 4. CALCULS AGRONOMIQUES ET TERRANIMO
+# ==========================================
 # 1. Teneur en argile (%)
 df_jour["CLAY_PCT"] = np.clip((df_jour["B"] - 3.5) / 0.137, 0.0, 100.0)
 
@@ -142,11 +147,19 @@ df_jour["PF"] = np.clip(pf, 0.8, 4.5)
 # 3. Succion matricielle en kPa
 df_jour["SUCCION_KPA"] = (10.0 ** df_jour["PF"]) / 10.0
 
+# 4. Résistance du sol et catégorisation Praticabilité Terranimo
+df_jour["RESISTANCE_BAR"] = 0.55 + 0.02 * df_jour["CLAY_PCT"] + 0.023 * df_jour["SUCCION_KPA"]
+
+conditions_prat = [
+    df_jour["RESISTANCE_BAR"] >= 2.0 * CONTRAINTE_BAR,
+    df_jour["RESISTANCE_BAR"] >= 0.92 * CONTRAINTE_BAR
+]
+df_jour["CLASSE_PRATICABILITE"] = np.select(conditions_prat, [3, 2], default=1)
+
 # ==========================================
-# 4. GESTION DU FOND DE CARTE ET MASQUES (SIG)
+# 5. GESTION DU FOND DE CARTE ET MASQUES (SIG)
 # ==========================================
 print("4. Préparation de la géométrie de la France...")
-
 epsg_code = 2154 if df_jour["LAMBY"].max() > 5000000 else 27572
 xmin, xmax = df_jour["LAMBX"].min() - 4000, df_jour["LAMBX"].max() + 4000
 ymin, ymax = df_jour["LAMBY"].min() - 4000, df_jour["LAMBY"].max() + 4000
@@ -165,9 +178,9 @@ masque_exterieur = bounding_box.difference(france_geom)
 gdf_masque = gpd.GeoDataFrame(geometry=[masque_exterieur], crs=epsg_code)
 
 # ==========================================
-# 5. FONCTION MODULAIRE DE GÉNÉRATION DE CARTES
+# 6. FONCTION MODULAIRE DE GÉNÉRATION DE CARTES
 # ==========================================
-def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar, cmap="viridis", norm=None, ticks=None, is_anomalie=False):
+def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar, cmap="viridis", norm=None, ticks=None, tick_labels=None, is_anomalie=False):
     print(f"   -> Génération de : {nom_fichier}...")
     fig, ax = plt.subplots(figsize=(10, 10))
     grille = df_data.pivot(index="LAMBY", columns="LAMBX", values=colonne)
@@ -193,17 +206,21 @@ def creer_et_sauvegarder_carte(df_data, colonne, nom_fichier, titre, label_cbar,
 
     cbar = fig.colorbar(im, ax=ax, orientation="horizontal", fraction=0.04, pad=0.05, aspect=40, ticks=ticks_to_use)
     cbar.set_label(label_cbar, fontsize=12)
+    
+    # Remplacement des étiquettes si fourni (utile pour la carte de praticabilité)
+    if tick_labels:
+        cbar.ax.set_xticklabels(tick_labels, fontsize=10)
 
     chemin_complet = os.path.join(dossier_static, nom_fichier)
     plt.savefig(chemin_complet, bbox_inches="tight", dpi=150)
     plt.close()
 
 # ==========================================
-# 6. EXÉCUTION DE LA GÉNÉRATION DES CARTES
+# 7. EXÉCUTION DE LA GÉNÉRATION DES CARTES
 # ==========================================
 print("5. Création des cartes demandées...")
 
-# Palettes de couleurs spécifiques pour les indicateurs de sol
+# Palettes de couleurs spécifiques
 bounds_pf = [1.0, 1.8, 2.0, 2.3, 2.7, 3.5, 4.2]
 cmap_pf = ListedColormap(["#7f0000", "#d73027", "#fee08b", "#d9ef8b", "#91cf60", "#1a9850"])
 norm_pf = BoundaryNorm(bounds_pf, cmap_pf.N)
@@ -211,6 +228,10 @@ norm_pf = BoundaryNorm(bounds_pf, cmap_pf.N)
 bounds_kpa = [0, 5, 10, 20, 50, 100, 250, 500, 1500]
 cmap_kpa = ListedColormap(plt.cm.Spectral(np.linspace(0, 1, len(bounds_kpa) - 1)))
 norm_kpa = BoundaryNorm(bounds_kpa, cmap_kpa.N)
+
+bounds_prat = [0.5, 1.5, 2.5, 3.5]
+cmap_prat = ListedColormap(["#e06c62", "#f7b963", "#c4deb2"])
+norm_prat = BoundaryNorm(bounds_prat, cmap_prat.N)
 
 cartes_a_produire = [
     # Cartes d'origine
@@ -221,10 +242,13 @@ cartes_a_produire = [
     {"df_data": df_cumuls, "colonne": "PLUIE_TOTALE", "nom_fichier": "carte_pluie_15j.png", "titre": "Cumul pluviométrique (15 derniers jours)", "label_cbar": "Précipitations (mm)", "cmap": "Blues"},
     {"df_data": df_cumuls, "colonne": col_pe, "nom_fichier": "carte_pe_15j.png", "titre": "Cumul précipitations efficaces (15 derniers jours)", "label_cbar": "Précipitations efficaces (mm)", "cmap": "BrBG"},
     
-    # Nouvelles cartes (Indicateurs Terranimo / Praticabilité)
+    # Nouvelles cartes (Indicateurs physiques)
     {"df_data": df_jour, "colonne": "CLAY_PCT", "nom_fichier": "carte_argile_ecoclimap.png", "titre": "Teneur en argile estimée des sols", "label_cbar": "Argile (%)", "cmap": "YlOrBr"},
     {"df_data": df_jour, "colonne": "PF", "nom_fichier": "carte_pf_portance.png", "titre": f"Indice de rétention en eau (pF) - {date_propre}\n< 2.0: Risque d'orniérage | > 2.5: Sol portant", "label_cbar": "Indice pF (log10 |h| en cm d'eau)", "cmap": cmap_pf, "norm": norm_pf, "ticks": bounds_pf},
-    {"df_data": df_jour, "colonne": "SUCCION_KPA", "nom_fichier": "carte_succion_kpa.png", "titre": f"Force de succion matricielle (|ψ|) - {date_propre}", "label_cbar": "Succion matricielle (kPa)", "cmap": cmap_kpa, "norm": norm_kpa, "ticks": bounds_kpa}
+    {"df_data": df_jour, "colonne": "SUCCION_KPA", "nom_fichier": "carte_succion_kpa.png", "titre": f"Force de succion matricielle (|ψ|) - {date_propre}", "label_cbar": "Succion matricielle (kPa)", "cmap": cmap_kpa, "norm": norm_kpa, "ticks": bounds_kpa},
+    
+    # Carte finale Terranimo
+    {"df_data": df_jour, "colonne": "CLASSE_PRATICABILITE", "nom_fichier": "carte_praticabilite_actuel.png", "titre": f"Praticabilité des sols (Terranimo) - {date_propre}\n(Charge: {int(CHARGE_KG)}kg | Pneu: {PRESSION_BAR}bar)", "label_cbar": "Classes de Praticabilité", "cmap": cmap_prat, "norm": norm_prat, "ticks": [1, 2, 3], "tick_labels": ["Non praticable\n(Risque sévère)", "Dangereux\n(Vigilance)", "Praticable\n(Favorable)"]}
 ]
 
 for config in cartes_a_produire:
@@ -236,7 +260,8 @@ with open(chemin_json, "w", encoding="utf-8") as f:
         "date": date_propre,
         "derniere_mise_a_jour": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "source_donnees": URL_PARQUET,
+        "terranimo_params": {"charge_kg": CHARGE_KG, "pression_bar": PRESSION_BAR},
         "cartes_disponibles": [c["nom_fichier"] for c in cartes_a_produire]
     }, f, ensure_ascii=False, indent=4)
 
-print("✅ Terminé ! Toutes les cartes (standards et agronomiques) ont été générées dans 'static/'.")
+print("✅ Terminé ! Toutes les cartes ont été générées dans 'static/'.")

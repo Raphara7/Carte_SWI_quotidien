@@ -1,6 +1,6 @@
 {
-    "date": "18/09/2026",
-    "derniere_mise_a_jour": "2026-09-19 12:09:57",
+    "date": "19/09/2026",
+    "derniere_mise_a_jour": "2026-09-20 12:46:09",
     "source_donnees": "https://hydra.s3.rbx.io.cloud.ovh.net/parquet/a2bbcf56-32c9-4821-b195-7b676c5854db.parquet",
     "terranimo_params": {
         "charge_kg": 4000.0,

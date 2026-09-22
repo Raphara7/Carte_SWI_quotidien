@@ -133,23 +133,40 @@ if df_jour.empty:
     raise ValueError("Erreur : La fusion des données a généré un tableau vide. Vérifiez l'échelle des coordonnées (LAMBX/LAMBY).")
 
 # ==========================================
-# 4. CALCULS AGRONOMIQUES ET TERRANIMO
+# 4. CALCULS AGRONOMIQUES ET TERRANIMO ACTUALISÉS
 # ==========================================
-# 1. Teneur en argile (%)
+# 1. Teneur massique en argile (%) inversée depuis b
 df_jour["CLAY_PCT"] = np.clip((df_jour["B"] - 3.5) / 0.137, 0.0, 100.0)
 
-# 2. Indice de succion (pF)
-swi_safe = np.clip(df_jour["SWI"].values, 0.0, 1.2)
-b_norm = df_jour["B"].values / 5.0
-pf = np.where(swi_safe <= 1.0, 4.2 - 2.2 * (swi_safe ** (1.0 / b_norm)), 2.0 - 1.0 * (swi_safe - 1.0))
-df_jour["PF"] = np.clip(pf, 0.8, 4.5)
+# 2. Calcul analytique ou semi-analytique de la succion (Clapp & Hornberger 1978)
+col_wg_val = next((c for c in df_jour.columns if c.upper() in ["WG_RACINE_Q", "WG_RACINE"]), None)
 
-# 3. Succion matricielle en kPa
-df_jour["SUCCION_KPA"] = (10.0 ** df_jour["PF"]) / 10.0
+if col_wg_val and df_jour[col_wg_val].notna().all() and "W_SAT" in df_jour.columns and "PSI_SAT_KPA" in df_jour.columns:
+    # Voie analytique directe (si teneur volumique dispo)
+    se = np.clip(df_jour[col_wg_val].astype(float).values / df_jour["W_SAT"].values, 0.05, 1.0)
+    succion_kpa = df_jour["PSI_SAT_KPA"].values * (se ** (-df_jour["B"].values))
+    succion_kpa = np.clip(succion_kpa, 0.0, 1500.0)
+    pf = np.log10(np.maximum(succion_kpa * 10.197, 1.0))
+else:
+    # Voie par repli via le SWI
+    swi_safe = np.clip(df_jour["SWI"].values, 0.0, 1.2)
+    b_norm = df_jour["B"].values / 5.0
+    pf = np.where(
+        swi_safe <= 1.0,
+        4.2 - 2.2 * (swi_safe ** (1.0 / b_norm)),
+        2.0 - 1.0 * (swi_safe - 1.0)
+    )
+    pf = np.clip(pf, 0.8, 4.2)
+    succion_kpa = (10.0 ** pf) / 10.197
 
-# 4. Résistance du sol et catégorisation Praticabilité Terranimo
-df_jour["RESISTANCE_BAR"] = 0.55 + 0.02 * df_jour["CLAY_PCT"] + 0.023 * df_jour["SUCCION_KPA"]
+df_jour["PF"] = pf
+df_jour["SUCCION_KPA"] = succion_kpa
 
+# 3. Résistance du sol Terranimo avec seuil de validité à 50 cbar (1 kPa = 1 cbar)
+succion_cbar_terranimo = np.clip(df_jour["SUCCION_KPA"].values, 0.0, 50.0)
+df_jour["RESISTANCE_BAR"] = 0.55 + 0.02 * df_jour["CLAY_PCT"] + 0.023 * succion_cbar_terranimo
+
+# 4. Décision Terranimo (Nomogramme 35 cm)
 conditions_prat = [
     df_jour["RESISTANCE_BAR"] >= 2.0 * CONTRAINTE_BAR,
     df_jour["RESISTANCE_BAR"] >= 0.92 * CONTRAINTE_BAR
